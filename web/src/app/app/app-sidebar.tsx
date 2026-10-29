@@ -6,8 +6,16 @@ import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
 import dynamic from "next/dynamic";
-import { CreateSpaceModal } from "./create-space-modal";
-import { JoinSpaceModal } from "./join-space-modal";
+const CreateSpaceModal = dynamic(
+  () =>
+    import("./create-space-modal").then((m) => ({ default: m.CreateSpaceModal })),
+  { ssr: false, loading: () => null },
+);
+const JoinSpaceModal = dynamic(
+  () =>
+    import("./join-space-modal").then((m) => ({ default: m.JoinSpaceModal })),
+  { ssr: false, loading: () => null },
+);
 import { NotificationBell } from "./notification-bell";
 import { SpaceKindNav } from "./space-kind-nav";
 import { SpaceNavRow } from "./space-nav-row";

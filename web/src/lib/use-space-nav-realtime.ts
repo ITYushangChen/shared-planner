@@ -3,6 +3,7 @@
 import { startTransition, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 /**
  * 菜单栏空间导航实时同步：
@@ -24,6 +25,7 @@ export function useSpaceNavRealtime() {
   const supabase = createClient();
 
   useEffect(() => {
+    if (!REALTIME_ENABLED) return;
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let delayTimer: ReturnType<typeof setTimeout> | null = null;

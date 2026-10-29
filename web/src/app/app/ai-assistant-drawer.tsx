@@ -7,7 +7,12 @@ import type { SpaceNavItem } from "@/lib/todos";
 
 const AiAssistant = dynamic(
   () => import("./ai-assistant").then((m) => ({ default: m.AiAssistant })),
-  { ssr: false },
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-11 w-11 animate-pulse rounded-full bg-zinc-300/60" aria-hidden />
+    ),
+  },
 );
 
 type Props = {

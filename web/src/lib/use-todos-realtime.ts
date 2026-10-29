@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { isTodosRealtimeRefreshSuppressed } from "@/lib/todos-realtime-gate";
+import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 /** 轻量同步信号：默认不整页 refresh，避免拖拽后闪屏 */
 export const TODOS_REALTIME_CHANGED = "sharetodo:todos-realtime-changed";
@@ -19,6 +20,7 @@ export function useTodosRealtime(spaceId?: string) {
   const supabase = createClient();
 
   useEffect(() => {
+    if (!REALTIME_ENABLED) return;
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let delayTimer: ReturnType<typeof setTimeout> | null = null;

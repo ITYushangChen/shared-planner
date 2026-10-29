@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import dynamic from "next/dynamic";
 import { getAppAuth, getMySpaceNav, visibleSpaceNav } from "@/lib/app-data";
 import { TODO_SELECT, type TodoRow } from "@/lib/todos";
 import {
@@ -10,7 +11,13 @@ import {
   resolveReportRange,
   stripReportData,
 } from "@/lib/reports";
-import { ReportWorkspace } from "./report-workspace";
+
+// 报表工作区是重客户端组件（含表格构建 + exceljs 导出封装），拆为独立 chunk，
+// 进入 /app/reports 时先出 SSR HTML，客户端 JS 并行异步加载，降低首屏 TTI。
+const ReportWorkspace = dynamic(
+  () =>
+    import("./report-workspace").then((m) => ({ default: m.ReportWorkspace })),
+);
 
 type SearchParams = Promise<{
   type?: string;

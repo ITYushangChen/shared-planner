@@ -453,7 +453,7 @@ export function TodoEditor({
               重要性
               <select
                 className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-                value={priority === "high" ? "high" : "low"}
+                value={priority}
                 onChange={(e) =>
                   setPriority(e.target.value as TodoRow["priority"])
                 }
@@ -463,6 +463,7 @@ export function TodoEditor({
                 }}
               >
                 <option value="high">重要</option>
+                <option value="medium">中等</option>
                 <option value="low">不重要</option>
               </select>
             </label>

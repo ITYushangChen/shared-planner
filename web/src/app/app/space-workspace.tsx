@@ -27,6 +27,7 @@ import {
   type TodoUnscheduledDetail,
   type TodoUpsertedDetail,
 } from "@/lib/todo-schedule-events";
+import { TODOS_REALTIME_CHANGED } from "@/lib/use-todos-realtime";
 import {
   getOverviewBounds,
   isAssignedToUser,
@@ -98,6 +99,10 @@ export function SpaceWorkspace({
   const [scheduledLocal, setScheduledLocal] = useState(scheduledProp);
   const [todosLocal, setTodosLocal] = useState(todosProp);
   const [completedLocal, setCompletedLocal] = useState(completedProp);
+  const [truncated, setTruncated] = useState<{
+    scheduled: boolean;
+    unscheduled: boolean;
+  } | null>(null);
   const [removedIds, setRemovedIds] = useState(() => new Set<string>());
   const spaceIdRef = useRef(space.id);
 
@@ -175,6 +180,7 @@ export function SpaceWorkspace({
       },
       onData: (data) => {
         if (cancelled || spaceIdRef.current !== space.id) return;
+        setTruncated(data.truncated ?? null);
         const filtered = filterTodosForViewer(
           data,
           canAssign,
@@ -295,6 +301,54 @@ export function SpaceWorkspace({
     };
   }, [space.id]);
 
+  // 实时同步：协作空间里别人增删改待办 / 改指派时，Realtime 事件驱动本地刷新。
+  // 之前只监听了本地乐观更新事件（TODO_UPSERTED/DELETED…），从未监听
+  // TODOS_REALTIME_CHANGED，所以"别人改的不实时"。保留拖拽静音闸门由 emit 端控制。
+  useEffect(() => {
+    function onRemoteChange() {
+      let cancelled = false;
+      void loadSpaceCalendarTodosStaged(space.id, {
+        onScheduled: (scheduled) => {
+          if (cancelled || spaceIdRef.current !== space.id) return;
+          const filtered = filterTodosForViewer(
+            {
+              scheduled,
+              unscheduled: getCachedSpaceTodos(space.id)?.unscheduled ?? [],
+            },
+            canAssign,
+            currentUserId,
+          );
+          setScheduledLocal(filtered.scheduled);
+          setTodosLocal([...filtered.scheduled, ...filtered.unscheduled]);
+        },
+      onData: (data) => {
+        if (cancelled || spaceIdRef.current !== space.id) return;
+        setTruncated(data.truncated ?? null);
+        const filtered = filterTodosForViewer(data, canAssign, currentUserId);
+        setScheduledLocal(filtered.scheduled);
+          setUnscheduledLocal(filtered.unscheduled);
+          setTodosLocal([...filtered.scheduled, ...filtered.unscheduled]);
+        },
+      });
+      if (view === "boards" || view === "list") {
+        void loadSpaceCompletedTodos(space.id, {
+          onData: (rows) => {
+            if (cancelled || spaceIdRef.current !== space.id) return;
+            setCompletedLocal(
+              filterCompletedForViewer(rows, canAssign, currentUserId),
+            );
+          },
+        });
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+    window.addEventListener(TODOS_REALTIME_CHANGED, onRemoteChange);
+    return () =>
+      window.removeEventListener(TODOS_REALTIME_CHANGED, onRemoteChange);
+  }, [space.id, canAssign, currentUserId, view]);
+
   const unscheduled = useMemo(
     () => unscheduledLocal.filter((t) => !removedIds.has(t.id)),
     [unscheduledLocal, removedIds],
@@ -357,6 +411,12 @@ export function SpaceWorkspace({
         view === "calendar" ? "gap-0 md:gap-4" : "gap-4",
       ].join(" ")}
     >
+      {truncated?.scheduled || truncated?.unscheduled ? (
+        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          该空间待办较多，已触达加载上限，部分更早的记录暂未显示。请缩小时间范围或按负责人筛选以查看全部。
+        </div>
+      ) : null}
+
       {view === "boards" ? (
         <TodoListPanel
           todos={boardsOpen.filter((t) => t.start_at)}

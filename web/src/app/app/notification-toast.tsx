@@ -9,6 +9,7 @@ import {
   NOTIFICATION_TOAST,
   type NotificationToastDetail,
 } from "@/lib/notify-events";
+import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 type ToastItem = {
   id: string;
@@ -60,6 +61,7 @@ export function NotificationToast() {
   }, []);
 
   useEffect(() => {
+    if (!REALTIME_ENABLED) return;
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let delayTimer: ReturnType<typeof setTimeout> | null = null;

@@ -11,10 +11,10 @@ import { DeferredTodosRealtime } from "./deferred-todos-realtime";
 import { OverviewPageHeader } from "./overview-page-header";
 import { OverviewWorkspace } from "./overview-workspace";
 
-const ACTIVE_TODO_LIMIT = 150;
-const SCHEDULED_LIMIT = 80;
-const UNSCHEDULED_LIMIT = 40;
-const DONE_TODO_LIMIT = 40;
+const ACTIVE_TODO_LIMIT = 1000;
+const SCHEDULED_LIMIT = 1000;
+const UNSCHEDULED_LIMIT = 500;
+const DONE_TODO_LIMIT = 500;
 
 type SearchParams = Promise<{
   view?: string;

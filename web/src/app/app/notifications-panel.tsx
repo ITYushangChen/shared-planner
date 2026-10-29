@@ -4,6 +4,7 @@ import { startTransition, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { emitNotificationsChanged } from "@/lib/notify-events";
+import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 type NotificationRow = {
   id: string;
@@ -157,6 +158,7 @@ export function NotificationsPanel() {
   // 实时刷新通知与待处理冲突
   useEffect(() => {
     if (!myId) return;
+    if (!REALTIME_ENABLED) return;
     const ch = supabase
       .channel(`notifications-panel-${myId}`)
       .on(

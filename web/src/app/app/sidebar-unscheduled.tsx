@@ -35,7 +35,7 @@ const UnscheduledList = dynamic(
   { ssr: false, loading: () => null },
 );
 
-const UNSCHEDULED_LIMIT = 40;
+const UNSCHEDULED_LIMIT = 500;
 const EMPTY_IDS: string[] = [];
 
 type Props = {

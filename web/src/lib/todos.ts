@@ -383,13 +383,13 @@ export function isAssignedToUser(
 /** 展示用：重要 / 不重要（DB 仍用 high | medium | low） */
 export const PRIORITY_LABEL: Record<string, string> = {
   high: "重要",
-  medium: "不重要",
+  medium: "中等",
   low: "不重要",
 };
 
 export const PRIORITY_FULL_LABEL: Record<string, string> = {
   high: "重要",
-  medium: "不重要",
+  medium: "中等",
   low: "不重要",
 };
 

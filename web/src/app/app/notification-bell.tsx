@@ -8,6 +8,7 @@ import {
   NOTIFICATIONS_CHANGED,
   type NotificationsChangedDetail,
 } from "@/lib/notify-events";
+import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 type BellProps = {
   iconOnly?: boolean;
@@ -87,6 +88,7 @@ export function NotificationBell({
 
   useEffect(() => {
     if (!subscribe) return;
+    if (!REALTIME_ENABLED) return;
 
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;

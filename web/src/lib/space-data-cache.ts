@@ -9,13 +9,17 @@ import {
   type TodoRow,
 } from "@/lib/todos";
 
-const SCHEDULED_LIMIT = 80;
-const UNSCHEDULED_LIMIT = 40;
-const COMPLETED_LIMIT = 80;
+// 加载上限提高到大值：绝大多数真实空间不再触发静默截断；
+// 仍保留 truncated 检测，触达上限时 UI 提示"可能还有更早记录未加载"。
+const SCHEDULED_LIMIT = 1000;
+const UNSCHEDULED_LIMIT = 500;
+const COMPLETED_LIMIT = 500;
 
 export type SpaceTodosCache = {
   scheduled: TodoRow[];
   unscheduled: TodoRow[];
+  /** 任一列表触达加载上限，说明可能还有未加载的更早记录（用于 UI 提示） */
+  truncated?: { scheduled: boolean; unscheduled: boolean };
 };
 
 export type SpaceMemberRow = {
@@ -98,9 +102,15 @@ function ensureTodosFetch(spaceId: string): Promise<SpaceTodosCache> {
         .order("created_at", { ascending: false })
         .limit(UNSCHEDULED_LIMIT),
     ]);
+    const scheduledRows = (scheduledRes.data ?? []) as unknown as TodoRow[];
+    const unscheduledRows = (unscheduledRes.data ?? []) as unknown as TodoRow[];
     const data: SpaceTodosCache = {
-      scheduled: (scheduledRes.data ?? []) as unknown as TodoRow[],
-      unscheduled: (unscheduledRes.data ?? []) as unknown as TodoRow[],
+      scheduled: scheduledRows,
+      unscheduled: unscheduledRows,
+      truncated: {
+        scheduled: scheduledRows.length >= SCHEDULED_LIMIT,
+        unscheduled: unscheduledRows.length >= UNSCHEDULED_LIMIT,
+      },
     };
     todosCache.set(spaceId, data);
     return data;
@@ -198,9 +208,14 @@ export async function loadSpaceCalendarTodosStaged(
     opts?.onScheduled?.(scheduled);
 
     const unscheduledRes = await unscheduledPromise;
+    const unscheduledRows = (unscheduledRes.data ?? []) as unknown as TodoRow[];
     const data: SpaceTodosCache = {
       scheduled,
-      unscheduled: (unscheduledRes.data ?? []) as unknown as TodoRow[],
+      unscheduled: unscheduledRows,
+      truncated: {
+        scheduled: scheduled.length >= SCHEDULED_LIMIT,
+        unscheduled: unscheduledRows.length >= UNSCHEDULED_LIMIT,
+      },
     };
     todosCache.set(spaceId, data);
     opts?.onData?.(data);

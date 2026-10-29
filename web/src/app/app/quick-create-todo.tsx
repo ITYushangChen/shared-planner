@@ -81,7 +81,9 @@ export function QuickCreateTodo({
         : ""),
   );
   const [durationMin, setDurationMin] = useState(60);
-  const [priority, setPriority] = useState<"high" | "low">(initialPriority);
+  const [priority, setPriority] = useState<"high" | "medium" | "low">(
+    initialPriority,
+  );
   const [color, setColor] = useState("");
   const [department, setDepartment] = useState<string>(DEFAULT_DEPARTMENT);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
@@ -364,9 +366,9 @@ export function QuickCreateTodo({
         重要性
         <select
           className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
-          value={priority === "high" ? "high" : "low"}
+          value={priority}
           onChange={(e) =>
-            setPriority(e.target.value as "high" | "low")
+            setPriority(e.target.value as "high" | "medium" | "low")
           }
           style={{
             borderLeftWidth: 4,
@@ -374,6 +376,7 @@ export function QuickCreateTodo({
           }}
         >
           <option value="high">重要</option>
+          <option value="medium">中等</option>
           <option value="low">不重要</option>
         </select>
       </label>

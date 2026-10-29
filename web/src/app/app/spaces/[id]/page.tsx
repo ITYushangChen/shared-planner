@@ -22,10 +22,10 @@ type Props = {
   searchParams: Promise<{ view?: string; assignee?: string; panel?: string }>;
 };
 
-const ACTIVE_TODO_LIMIT = 150;
-const SCHEDULED_LIMIT = 80;
-const UNSCHEDULED_LIMIT = 40;
-const DONE_TODO_LIMIT = 80;
+const ACTIVE_TODO_LIMIT = 1000;
+const SCHEDULED_LIMIT = 1000;
+const UNSCHEDULED_LIMIT = 500;
+const DONE_TODO_LIMIT = 500;
 
 function parseSpaceView(raw: string | undefined): "boards" | "calendar" | "list" {
   if (raw === "boards" || raw === "list") return raw;
