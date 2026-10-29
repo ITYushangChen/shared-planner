@@ -120,7 +120,7 @@ export function TodoEditor({
       .select("description")
       .eq("id", todo.id)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data }: { data: any }) => {
         if (!cancelled && data?.description != null) {
           setDescription(data.description);
         }

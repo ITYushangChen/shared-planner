@@ -102,7 +102,7 @@ export function SpacePanelModal({
           setMembers([]);
         } else {
           setMembers(
-            (data ?? []).map((m) => {
+            (data ?? []).map((m: any) => {
               const profile = m.profiles as unknown as {
                 display_name: string;
                 email: string | null;

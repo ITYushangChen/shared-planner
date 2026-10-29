@@ -116,7 +116,7 @@ export function SidebarUnscheduled({ spaces }: Props) {
 
   useEffect(() => {
     const supabase = createClient();
-    void supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then(({ data }: { data: any }) => {
       setCurrentUserId(data.user?.id ?? null);
     });
   }, []);
@@ -198,7 +198,7 @@ export function SidebarUnscheduled({ spaces }: Props) {
       .from("space_members")
       .select("user_id, space_id, profiles(display_name, email)")
       .in("space_id", ids)
-      .then(({ data }) => {
+      .then(({ data }: { data: any[] | null }) => {
         if (cancelled || !data) return;
         const map: Record<string, SpaceMemberOption[]> = {};
         for (const row of data) {

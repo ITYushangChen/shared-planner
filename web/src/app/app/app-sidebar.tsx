@@ -174,10 +174,10 @@ export function AppSidebar({
       .from("space_members")
       .select("user_id, profiles(display_name, email)")
       .eq("space_id", quickSpaceId)
-      .then(({ data }) => {
+      .then(({ data }: { data: any[] | null }) => {
         if (cancelled) return;
         setQuickMembers(
-          (data ?? []).map((m) => {
+          (data ?? []).map((m: any) => {
             const profile = m.profiles as unknown as {
               display_name: string;
               email: string | null;

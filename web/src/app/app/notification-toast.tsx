@@ -86,7 +86,7 @@ export function NotificationToast() {
             table: "notifications",
             filter: `user_id=eq.${user.id}`,
           },
-          (payload) => {
+          (payload: any) => {
             if (document.visibilityState === "hidden") return;
             const row = payload.new as {
               id: string;

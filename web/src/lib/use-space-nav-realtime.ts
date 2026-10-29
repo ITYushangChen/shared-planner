@@ -47,7 +47,7 @@ export function useSpaceNavRealtime() {
             table: "space_members",
             filter: `user_id=eq.${user.id}`,
           },
-          (payload) => {
+          (payload: any) => {
             if (cancelled) return;
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {

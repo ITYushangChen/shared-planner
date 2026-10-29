@@ -375,7 +375,7 @@ export function OverviewWorkspace({
       .from("space_members")
       .select("user_id, space_id, profiles(display_name, email)")
       .in("space_id", spaceIds)
-      .then(({ data }) => {
+      .then(({ data }: { data: any[] | null }) => {
         if (cancelled || !data) return;
         membersFetchedForRef.current = spaceIdsKey;
         const next: Record<string, SpaceMemberOption[]> = {};
