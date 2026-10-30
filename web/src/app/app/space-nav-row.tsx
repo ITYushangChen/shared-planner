@@ -106,7 +106,7 @@ export function SpaceNavRow({
 
   const iconBtn = stacked
     ? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]"
-    : "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-muted)] opacity-70 transition-colors hover:bg-white hover:text-[var(--brand-ink)] hover:opacity-100";
+    : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base text-[var(--text-muted)] opacity-70 transition-colors hover:bg-white hover:text-[var(--brand-ink)] hover:opacity-100";
 
   const menu = menuOpen ? (
     <div
@@ -197,7 +197,7 @@ export function SpaceNavRow({
     <div
       ref={rootRef}
       className={[
-        "relative rounded-r-lg border-l-[3px] py-1.5 pl-2 pr-1 text-sm transition-colors duration-200",
+        "relative rounded-r-lg border-l-[3px] py-1.5 pl-2 pr-1 text-[15px] transition-colors duration-200",
         active
           ? "border-brand bg-brand-soft font-medium text-brand"
           : "border-transparent text-[var(--brand-ink)] hover:bg-white",
@@ -229,7 +229,7 @@ export function SpaceNavRow({
         <Link
           href={href}
           prefetch
-          className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]"
+          className="mt-0.5 block truncate text-xs text-[var(--text-muted)]"
           onMouseEnter={prefetchSpace}
           onFocus={prefetchSpace}
           onClick={() => {

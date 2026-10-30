@@ -154,6 +154,12 @@ export function AppSidebar({
         ? "list"
         : "calendar";
   const onOverviewPage = pathname === "/app";
+  /** 消息页：自动隐藏二级「空间」栏，让消息内容占满整屏 */
+  const onMessagesPage =
+    pathname === "/app/notifications" ||
+    pathname.startsWith("/app/notifications/");
+  /** 二级栏真正隐藏（手动收起 或 处于消息页） */
+  const panelHidden = panelCollapsed || onMessagesPage;
   const privateSpaces = spaces.filter((s) => s.visibility !== "public");
   const publicSpaces = spaces.filter((s) => s.visibility === "public");
   const name = displayName || "用户";
@@ -214,7 +220,7 @@ export function AppSidebar({
   const onReports =
     pathname === "/app/reports" || pathname.startsWith("/app/reports/");
   const onNotify = pathname === "/app/notifications";
-  const onProfile = pathname === "/app/profile";
+  const onProfile = pathname.startsWith("/app/settings");
   const onSpaces = pathname.startsWith("/app/spaces");
 
   const spaceIdFromPath = pathname.startsWith("/app/spaces/")
@@ -322,10 +328,10 @@ export function AppSidebar({
   return (
     <>
       {/* 最左图标栏（半透明，透出整页背景图） */}
-      <aside className="hidden h-dvh w-14 shrink-0 sticky top-0 flex-col items-center gap-0.5 bg-[var(--brand-rail)]/80 py-3 backdrop-blur-md md:flex">
+      <aside className="hidden h-dvh w-28 shrink-0 sticky top-0 flex-col items-center gap-1 bg-[var(--brand-rail)]/80 py-3 backdrop-blur-md md:flex">
         <Link
-          href="/app/profile"
-          title="我的"
+          href="/app/settings"
+          title="设置"
           prefetch
           className={railIconClass(onProfile)}
         >
@@ -334,10 +340,10 @@ export function AppSidebar({
             <img
               src={avatarUrl}
               alt=""
-              className="h-8 w-8 rounded-full border-2 border-white/40 object-cover"
+              className="h-10 w-10 rounded-full border-2 border-white/40 object-cover"
             />
           ) : (
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-xs font-semibold text-white">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-sm font-semibold text-white">
               {name.slice(0, 1).toUpperCase()}
             </span>
           )}
@@ -384,7 +390,7 @@ export function AppSidebar({
                 onClick={() => goOverviewRange(key)}
                 className={railIconClass(active)}
               >
-                <span className="text-[11px] font-bold tracking-wide">
+                <span className="text-[13px] font-bold tracking-wide">
                   {label}
                 </span>
               </button>
@@ -417,7 +423,7 @@ export function AppSidebar({
                 onClick={() => goAppView(view)}
                 className={railIconClass(active)}
               >
-                <span className="text-[11px] font-bold tracking-wide">
+                <span className="text-[13px] font-bold tracking-wide">
                   {short}
                 </span>
               </button>
@@ -437,21 +443,23 @@ export function AppSidebar({
             prefetch
             className={railIconClass(onReports)}
           >
-            <span className="text-[11px] font-bold tracking-wide">报</span>
+            <span className="text-[13px] font-bold tracking-wide">报</span>
           </Link>
         </div>
 
         <div className="mt-auto flex flex-col items-center gap-0.5">
-          <button
-            type="button"
-            title={panelCollapsed ? "展开空间列表" : "收起空间列表"}
-            aria-label={panelCollapsed ? "展开空间列表" : "收起空间列表"}
-            aria-pressed={panelCollapsed}
-            onClick={togglePanelCollapsed}
-            className={railIconClass(false)}
-          >
-            <RailIconPanelToggle collapsed={panelCollapsed} />
-          </button>
+          {!onMessagesPage ? (
+            <button
+              type="button"
+              title={panelCollapsed ? "展开空间列表" : "收起空间列表"}
+              aria-label={panelCollapsed ? "展开空间列表" : "收起空间列表"}
+              aria-pressed={panelCollapsed}
+              onClick={togglePanelCollapsed}
+              className={railIconClass(false)}
+            >
+              <RailIconPanelToggle collapsed={panelCollapsed} />
+            </button>
+          ) : null}
           <button
             type="button"
             title="AI 助手"
@@ -463,7 +471,7 @@ export function AppSidebar({
             }}
             className={railIconClass(false) + " disabled:opacity-40"}
           >
-            <span className="text-[11px] font-bold tracking-wide">AI</span>
+            <span className="text-[13px] font-bold tracking-wide">AI</span>
           </button>
           <CreateSpaceModal rail />
           <JoinSpaceModal rail />
@@ -492,15 +500,17 @@ export function AppSidebar({
       <aside
         className={[
           "hidden h-dvh sticky top-0 shrink-0 flex-col border-r border-[var(--border-muted)]/80 bg-white/75 backdrop-blur-md transition-[width,opacity] duration-200 md:flex",
-          panelCollapsed
+          panelHidden
             ? "w-0 overflow-hidden border-r-0 opacity-0 pointer-events-none"
             : "w-64 opacity-100",
         ].join(" ")}
-        aria-hidden={panelCollapsed}
+        aria-hidden={panelHidden}
       >
         <div className="shrink-0 border-b border-[var(--border-muted)]/80 px-3 py-3">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-bold text-[var(--brand-ink)]">空间</p>
+            <p className="text-[17px] font-bold tracking-tight text-[var(--brand-ink)]">
+              空间
+            </p>
             <button
               type="button"
               title="收起空间列表"
@@ -516,18 +526,18 @@ export function AppSidebar({
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="搜索空间"
-            className="mt-2 w-full rounded-lg border border-[var(--border-muted)] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-brand"
+            className="mt-2 w-full rounded-lg border border-[var(--border-muted)] bg-white px-2.5 py-2 text-sm outline-none focus:border-brand"
           />
         </div>
 
-        <nav className="flex max-h-[42%] min-h-0 shrink-0 flex-col overflow-y-auto p-2">
+        <nav className="flex max-h-[52%] min-h-0 shrink-0 flex-col overflow-y-auto p-2">
           <Link
             href="/app?view=calendar&range=week"
             prefetch
             className={spaceNavClass(onOverview && !onSpaces)}
           >
             <span className="block truncate font-medium">总览工作区</span>
-            <span className="block text-[11px] text-[var(--text-muted)]">
+            <span className="block text-xs text-[var(--text-muted)]">
               全部空间日程
             </span>
           </Link>
@@ -537,18 +547,18 @@ export function AppSidebar({
             className={spaceNavClass(onReports)}
           >
             <span className="block truncate font-medium">报告中心</span>
-            <span className="block text-[11px] text-[var(--text-muted)]">
+            <span className="block text-xs text-[var(--text-muted)]">
               日报 · 周报 · 月报
             </span>
           </Link>
 
           {searching ? (
             <div className="mt-3 space-y-0.5">
-              <p className="px-2 text-[11px] font-semibold text-[var(--text-muted)]">
+              <p className="px-2 text-xs font-semibold text-[var(--text-muted)]">
                 搜索结果
               </p>
               {searchHits.length === 0 ? (
-                <p className="px-2 py-2 text-xs text-[var(--text-muted)]">
+                <p className="px-2 py-2 text-sm text-[var(--text-muted)]">
                   无匹配空间
                 </p>
               ) : (
@@ -568,7 +578,7 @@ export function AppSidebar({
                 <button
                   type="button"
                   onClick={togglePrivOpen}
-                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-sm font-semibold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
+                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-[15px] font-bold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
                   aria-expanded={privOpen}
                 >
                   <span>我的空间</span>
@@ -581,7 +591,7 @@ export function AppSidebar({
                 <button
                   type="button"
                   onClick={togglePrivOpen}
-                  className="shrink-0 rounded-lg px-1.5 py-1 text-xs font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                  className="shrink-0 rounded-lg px-1.5 py-1 text-[13px] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
                   aria-expanded={privOpen}
                 >
                   {privOpen ? "收起" : "展开"}
@@ -604,7 +614,7 @@ export function AppSidebar({
                 <button
                   type="button"
                   onClick={togglePubsOpen}
-                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-sm font-semibold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
+                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-[15px] font-bold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
                   aria-expanded={pubsOpen}
                 >
                   <span>公共空间</span>
@@ -617,7 +627,7 @@ export function AppSidebar({
                 <button
                   type="button"
                   onClick={togglePubsOpen}
-                  className="shrink-0 rounded-lg px-1.5 py-1 text-xs font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                  className="shrink-0 rounded-lg px-1.5 py-1 text-[13px] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
                   aria-expanded={pubsOpen}
                 >
                   {pubsOpen ? "收起" : "展开"}
@@ -638,7 +648,7 @@ export function AppSidebar({
             </>
           )}
         </nav>
-        {!panelCollapsed ? <SidebarUnscheduled spaces={spaces} /> : null}
+        {!panelHidden ? <SidebarUnscheduled spaces={spaces} /> : null}
       </aside>
 
       {/* 移动端顶栏：菜单 + 消息铃铛 + 标题 */}
@@ -695,11 +705,11 @@ export function AppSidebar({
           );
         })}
         <Link
-          href="/app/profile"
+          href="/app/settings"
           prefetch
           className={mobileNavClass(onProfile)}
         >
-          我的
+          设置
         </Link>
       </nav>
 
@@ -1113,14 +1123,14 @@ export function AppSidebar({
 
 function railIconClass(active: boolean) {
   return [
-    "mb-1 flex h-10 w-10 items-center justify-center rounded-lg text-white transition-colors duration-200",
+    "mb-1 flex h-12 w-16 shrink-0 items-center justify-center rounded-xl text-white transition-colors duration-200",
     active ? "bg-black/15" : "hover:bg-white/15",
   ].join(" ");
 }
 
 function spaceNavClass(active: boolean, nested = false) {
   return [
-    "block py-2 text-sm transition-colors duration-200",
+    "block py-2 text-[15px] transition-colors duration-200",
     nested ? "rounded-r-lg pl-2.5 pr-2" : "rounded-lg px-2.5",
     active
       ? "border-l-[3px] border-brand bg-brand-soft font-medium text-brand"

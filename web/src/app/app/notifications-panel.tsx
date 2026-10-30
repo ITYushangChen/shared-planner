@@ -357,7 +357,7 @@ export function NotificationsPanel() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl">
+    <div className="w-full">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">消息中心</h1>
