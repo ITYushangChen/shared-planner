@@ -35,7 +35,7 @@ export default async function AppLayout({
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col bg-white/70 backdrop-blur-[2px] pb-[calc(4rem+env(safe-area-inset-bottom))] pt-[calc(3rem+env(safe-area-inset-top))] md:pb-0 md:pt-0">
         <DeferredNotificationToast />
         {/* 全站主体统一宽度：居中定宽，避免超宽屏下内容无限拉伸 */}
-        <div className="mx-auto flex w-full min-w-0 max-w-[1100px] flex-1 flex-col">
+        <div className="mx-auto flex w-full min-w-0 max-w-[960px] flex-1 flex-col">
           {children}
         </div>
       </div>
