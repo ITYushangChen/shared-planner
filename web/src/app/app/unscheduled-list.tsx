@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { createPortal } from "react-dom";
 import { Draggable } from "@fullcalendar/interaction";
 import { createClient } from "@/lib/supabase/client";
 import { emitTodoUpserted } from "@/lib/todo-schedule-events";
@@ -15,6 +14,7 @@ import {
   type TodoRow,
 } from "@/lib/todos";
 import { CompactTodoCard } from "./compact-todo-card";
+import { Modal } from "./ui-modal";
 
 const TodoEditor = dynamic(
   () => import("./todo-editor").then((m) => ({ default: m.TodoEditor })),
@@ -140,120 +140,149 @@ export function UnscheduledList({
     setCreateOpen(true);
   }
 
-  const createModal =
-    createOpen && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh]"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setCreateOpen(false);
-            }}
+  const createModal = (
+    <Modal
+      open={createOpen}
+      onClose={() => setCreateOpen(false)}
+      title="创建未排期任务"
+      zClass="z-[80]"
+      overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
+      className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
+    >
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
+            创建未排期任务
+          </h2>
+          <button
+            type="button"
+            className="rounded px-2 py-1 text-sm text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+            onClick={() => setCreateOpen(false)}
           >
-            <div className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
-                  创建未排期任务
-                </h2>
-                <button
-                  type="button"
-                  className="rounded px-2 py-1 text-sm text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
-                  onClick={() => setCreateOpen(false)}
-                >
-                  关闭
-                </button>
-              </div>
-              <QuickCreateTodo
-                spaces={spaces}
-                defaultSpaceId={defaultSpaceId}
-                members={members}
-                membersBySpace={membersBySpace}
-                canAssign={canAssign}
-                allowOverview={allowOverview}
-                bare
-                onCreated={() => setCreateOpen(false)}
-              />
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
+            关闭
+          </button>
+        </div>
+        <QuickCreateTodo
+          spaces={spaces}
+          defaultSpaceId={defaultSpaceId}
+          members={members}
+          membersBySpace={membersBySpace}
+          canAssign={canAssign}
+          allowOverview={allowOverview}
+          bare
+          onCreated={() => setCreateOpen(false)}
+        />
+      </div>
+    </Modal>
+  );
 
   return (
     <div
       id={acceptCalendarDrop ? "unscheduled-drop-zone" : undefined}
       className={
         compact
-          ? "flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--surface-muted)]/50 p-2 transition-[box-shadow,background-color,border-color] duration-150"
+          ? [
+              "flex min-h-0 flex-col overflow-hidden bg-[var(--surface-muted)]/50 p-2 transition-[box-shadow,background-color,border-color] duration-150",
+              todos.length > 0 ? "flex-1" : "shrink-0",
+            ].join(" ")
           : "rounded-xl border border-dashed border-[var(--border-muted)] bg-[var(--surface-muted)] p-3 transition-[box-shadow,background-color,border-color] duration-150 md:p-4"
       }
     >
-      <div className="flex shrink-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-sm font-bold text-[var(--brand-ink)]">
+      {compact ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          <h2 className="text-xs font-semibold text-[var(--brand-ink)]">
             未排期待办
           </h2>
-          <p className="mt-1 text-[11px] text-[var(--text-muted)] opacity-80">
-            {compact
-              ? acceptCalendarDrop
-                ? "拖到日历排期；点击编辑"
-                : "点击卡片编辑"
-              : acceptCalendarDrop
+          {todos.length > 0 ? (
+            <span className="rounded-full bg-white px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--text-muted)]">
+              {todos.length}
+            </span>
+          ) : null}
+          {canCreate ? (
+            <button
+              type="button"
+              title="创建未排期任务"
+              aria-label="创建未排期任务"
+              onClick={openCreate}
+              className="ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[13px] leading-none text-[var(--text-muted)] transition-colors hover:bg-white hover:text-[var(--brand-ink)]"
+            >
+              +
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-[var(--brand-ink)]">
+              未排期待办
+            </h2>
+            <p className="mt-1 text-[11px] text-[var(--text-muted)] opacity-80">
+              {acceptCalendarDrop
                 ? "拖到日历排期；从日历拖回此处取消排期；点击空白处创建"
                 : "拖到左侧象限可设重要度并填写时间；点击空白处创建"}
-          </p>
+            </p>
+          </div>
+          {canCreate ? (
+            <button
+              type="button"
+              title="创建未排期任务"
+              aria-label="创建未排期任务"
+              onClick={openCreate}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-muted)] bg-white text-lg font-medium text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
+            >
+              +
+            </button>
+          ) : null}
         </div>
-        {canCreate ? (
-          <button
-            type="button"
-            title="创建未排期任务"
-            aria-label="创建未排期任务"
-            onClick={openCreate}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-muted)] bg-white text-lg font-medium text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
-          >
-            +
-          </button>
-        ) : null}
-      </div>
+      )}
 
       {todos.length === 0 ? (
-        <button
-          type="button"
-          disabled={!canCreate}
-          onClick={openCreate}
-          className={[
-            "mt-3 flex w-full flex-col items-center rounded-lg px-2 text-center transition-colors hover:bg-white/60 disabled:cursor-default disabled:hover:bg-transparent",
-            compact ? "py-4" : "py-6 mt-4",
-          ].join(" ")}
-        >
-          <svg
-            width="48"
-            height="40"
-            viewBox="0 0 48 40"
-            fill="none"
-            aria-hidden
-            className="opacity-40"
+        compact ? (
+          <button
+            type="button"
+            disabled={!canCreate}
+            onClick={openCreate}
+            className="mt-2 w-full shrink-0 rounded-lg border border-dashed border-[var(--border-muted)] py-1.5 text-[11px] text-[var(--text-muted)] transition-colors hover:border-[var(--brand)] hover:bg-white hover:text-[var(--brand-ink)] disabled:cursor-default disabled:hover:border-[var(--border-muted)] disabled:hover:bg-transparent disabled:hover:text-[var(--text-muted)]"
           >
-            <rect
-              x="4"
-              y="8"
-              width="40"
-              height="28"
-              rx="6"
-              stroke="var(--brand)"
-              strokeWidth="1.5"
-              strokeDasharray="3 3"
-            />
-            <path
-              d="M16 20h16M16 26h10"
-              stroke="var(--text-muted)"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-          <p className="mt-2 text-sm text-[var(--text-muted)] opacity-70">
-            {canCreate ? "暂无未排期 · 点击创建" : "暂无未排期待办"}
-          </p>
-        </button>
+            {canCreate ? "＋ 暂无未排期 · 点击创建" : "暂无未排期待办"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!canCreate}
+            onClick={openCreate}
+            className="mt-4 flex w-full flex-col items-center rounded-lg px-2 py-6 text-center transition-colors hover:bg-white/60 disabled:cursor-default disabled:hover:bg-transparent"
+          >
+            <svg
+              width="48"
+              height="40"
+              viewBox="0 0 48 40"
+              fill="none"
+              aria-hidden
+              className="opacity-40"
+            >
+              <rect
+                x="4"
+                y="8"
+                width="40"
+                height="28"
+                rx="6"
+                stroke="var(--brand)"
+                strokeWidth="1.5"
+                strokeDasharray="3 3"
+              />
+              <path
+                d="M16 20h16M16 26h10"
+                stroke="var(--text-muted)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            <p className="mt-2 text-sm text-[var(--text-muted)] opacity-70">
+              {canCreate ? "暂无未排期 · 点击创建" : "暂无未排期待办"}
+            </p>
+          </button>
+        )
       ) : (
         <>
           <ul

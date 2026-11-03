@@ -19,7 +19,7 @@ import { DEFAULT_DEPARTMENT, DEPARTMENT_OPTIONS } from "@/lib/departments";
 import { resolveTodoColor } from "@/lib/ui-prefs";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
 
-/** 总览：落到个人默认空间（spaces 列表第一项） */
+/** 总览：落到「创建到」下拉里的第一项可见空间（bootstrap 默认空间不进列表） */
 const OVERVIEW_VALUE = "__overview__";
 
 type Props = {
@@ -59,6 +59,8 @@ export function QuickCreateTodo({
 }: Props) {
   const supabase = createClient();
   const defaultSpace = spaces[0]?.id || "";
+  /** 总览选项实际落到的空间名（写死「个人默认空间」会误导：真实落点是列表第一项） */
+  const defaultSpaceName = spaces.find((s) => s.id === defaultSpace)?.name ?? "";
   const [title, setTitle] = useState("");
   const [spaceId, setSpaceId] = useState(
     allowOverview && !defaultSpaceId
@@ -278,7 +280,8 @@ export function QuickCreateTodo({
         >
           {allowOverview ? (
             <option value={OVERVIEW_VALUE}>
-              总览工作区（个人默认空间）
+              总览工作区
+              {defaultSpaceName ? `（${defaultSpaceName}）` : "（暂无空间）"}
             </option>
           ) : null}
           {spaces.map((s) => (

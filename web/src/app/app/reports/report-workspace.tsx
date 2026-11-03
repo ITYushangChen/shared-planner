@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   REPORT_STATUS_LABEL,
@@ -11,6 +11,7 @@ import {
   filterReportData,
   reportFileName,
   type ReportDataLike,
+  type ReportSpaceGroup,
   type ReportTask,
   type ReportType,
 } from "@/lib/reports";
@@ -30,6 +31,8 @@ type Props = {
   input: string;
   selectedSpaceIds: string[];
   viewData: ReportDataLike | null;
+  /** 未排期 backlog（按空间分组）；不计入任何统计，只在底部单独列出 */
+  backlogSpaces?: ReportSpaceGroup[];
   fetchError: string | null;
   /** 任务数量达到查询上限，列表可能不完整 */
   taskLimitReached: boolean;
@@ -70,6 +73,7 @@ export function ReportWorkspace({
   input,
   selectedSpaceIds,
   viewData,
+  backlogSpaces = [],
   fetchError,
   taskLimitReached,
 }: Props) {
@@ -94,12 +98,13 @@ export function ReportWorkspace({
     () => reportPeriodBounds(type, input),
     [type, input],
   );
-  // 任务列表变化后默认全选，直接展示所有任务
-  const [prevTaskKey, setPrevTaskKey] = useState(taskKey);
-  if (prevTaskKey !== taskKey) {
-    setPrevTaskKey(taskKey);
+  // 任务列表变化后默认全选，直接展示所有任务。
+  // ⚠️ 原先这里用「渲染期 setState」（prevTaskKey 比较）实现，实测不生效：
+  // 首屏 selectedTaskIds 始终为空，顶部统计卡显示 0 而列表有任务，自相矛盾。
+  // 改成 useEffect，任务集变化即全选。
+  useEffect(() => {
     setSelectedTaskIds(new Set(taskKey ? taskKey.split(",") : []));
-  }
+  }, [taskKey]);
 
   const filteredData = useMemo(
     () => (viewData ? filterReportData(viewData, selectedTaskIds) : null),
@@ -263,6 +268,7 @@ export function ReportWorkspace({
         "1 个空间")
       : `已选 ${selectedSpaceIds.length} 个空间`;
   const allTasksCount = taskKey ? taskKey.split(",").length : 0;
+  const backlogCount = backlogSpaces.reduce((n, g) => n + g.tasks.length, 0);
 
   return (
     <>
@@ -388,7 +394,7 @@ export function ReportWorkspace({
             title="暂无空间"
             description="加入或创建一个空间后，即可按周期生成报告。"
           />
-        ) : !viewData || allTasksCount === 0 ? (
+        ) : !viewData || (allTasksCount === 0 && backlogCount === 0) ? (
           <EmptyState
             title="所选空间暂无任务"
             description="试试勾选其他空间，或先在空间里创建任务，再来生成报告。"
@@ -435,7 +441,9 @@ export function ReportWorkspace({
                 </span>
               </div>
             </div>
-            <SummaryCards data={viewData} />
+            {/* 用 filteredData 而非 viewData：用户取消勾选后，顶部统计卡
+                要与「复制报告 / 导出 Excel」的内容一致，否则数字和内容自相矛盾 */}
+            <SummaryCards data={filteredData ?? viewData} />
             <div className="flex flex-col gap-4">
               {viewData.spaces.map((group) => (
                 <SpaceReportCard
@@ -449,6 +457,14 @@ export function ReportWorkspace({
                 />
               ))}
             </div>
+            {backlogSpaces.length > 0 ? (
+              <BacklogCard
+                groups={backlogSpaces}
+                onOpenDetail={(task) =>
+                  router.push(`/app/reports/task/${task.id}`)
+                }
+              />
+            ) : null}
           </>
         ) : null}
       </div>
@@ -541,6 +557,64 @@ function SpacePicker({
         </>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 未排期 backlog。
+ *
+ * 这些任务没有 start_at，不属于任何周期，此前混在主列表里还占了完成率分母
+ * （「本日已完成 3/8」里混着一堆跟今天无关的事）。现在单独成块：
+ * 不参与统计、不参与勾选，只提醒用户去排期。
+ */
+function BacklogCard({
+  groups,
+  onOpenDetail,
+}: {
+  groups: ReportSpaceGroup[];
+  onOpenDetail: (task: ReportTask) => void;
+}) {
+  const all = groups.flatMap((g) => g.tasks);
+  if (all.length === 0) return null;
+  return (
+    <section className="overflow-hidden rounded-xl border border-dashed border-amber-300 bg-amber-50/50">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" />
+          <h2 className="truncate text-sm font-semibold text-[var(--brand-ink)]">
+            未排期任务
+          </h2>
+        </div>
+        <p className="text-xs text-[var(--text-muted)]">
+          {all.length} 项 · 不计入上方统计，建议尽快安排时间
+        </p>
+      </header>
+      <ul className="divide-y divide-amber-200/60">
+        {all.map((task) => (
+          <li key={task.id} className="px-4 py-2">
+            <button
+              type="button"
+              onClick={() => onOpenDetail(task)}
+              className="flex w-full flex-col items-start gap-0.5 text-left"
+            >
+              <span className="flex w-full items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--brand-ink)] hover:underline">
+                  {task.title}
+                </span>
+                <span className="shrink-0 rounded bg-white/70 px-1.5 py-0.5 text-[11px] text-[var(--text-muted)]">
+                  {task.space_name}
+                </span>
+              </span>
+              {task.description?.trim() ? (
+                <span className="line-clamp-1 text-xs text-[var(--text-muted)]">
+                  {task.description.trim()}
+                </span>
+              ) : null}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

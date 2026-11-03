@@ -662,9 +662,23 @@ export function resolveReportRange(
   const now = new Date();
   if (type === "month") {
     const m = /^(\d{4})-(\d{2})$/.exec(rawDate?.trim() ?? "");
-    const base = m
-      ? new Date(Number(m[1]), Number(m[2]) - 1, 1)
-      : new Date(now.getFullYear(), now.getMonth(), 1);
+    // ⚠️ 正则只校验了「两位数字」，`2026-13` / `2026-00` 会被 Date 静默
+    // 折算成次年的 1 月 / 上一年的 12 月，导致报告标题与内容对不上。
+    // 解析后回读月份，不一致就当作没传。
+    let parsedMonth: Date | null = null;
+    if (m) {
+      const monthNum = Number(m[2]);
+      if (monthNum >= 1 && monthNum <= 12) {
+        const candidate = new Date(Number(m[1]), monthNum - 1, 1);
+        if (
+          candidate.getMonth() === monthNum - 1 &&
+          candidate.getFullYear() === Number(m[1])
+        ) {
+          parsedMonth = candidate;
+        }
+      }
+    }
+    const base = parsedMonth ?? new Date(now.getFullYear(), now.getMonth(), 1);
     const start = new Date(
       base.getFullYear(),
       base.getMonth(),
@@ -706,6 +720,66 @@ export function resolveReportRange(
       ? formatSlashDate(start)
       : `${formatSlashDate(start)} ~ ${formatSlashDate(end)}`;
   return { start, end, input, rangeLabel };
+}
+
+/**
+ * 按报告周期过滤任务。
+ *
+ * 此前「日报 / 周报 / 月报」三份报告内容完全一样 —— 查询只有空间与状态条件，
+ * 没有时间条件，选「日报 11/02」会列出该空间全部历史未完成待办。
+ *
+ * 规则（未完成任务用「区间相交」，保证跨周期长任务不丢）：
+ *   - 已完成：completed_at 落在本周期内
+ *   - 未排期（start_at 为空）：始终算入，属于 backlog
+ *   - 其余：start_at <= 周期结束 且（无结束时间 或 end_at >= 周期开始）
+ */
+export function filterTodosForRange<T extends TodoRow>(
+  todos: T[],
+  start: Date,
+  end: Date,
+): T[] {
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return todos.filter((todo) => {
+    const status = (todo as { status?: string }).status;
+    if (status === "done") {
+      const doneAt = todo.completed_at
+        ? new Date(todo.completed_at as string).getTime()
+        : Number.NaN;
+      return (
+        Number.isFinite(doneAt) && doneAt >= startMs && doneAt <= endMs
+      );
+    }
+    if (!todo.start_at) return true;
+    const startAt = new Date(todo.start_at as string).getTime();
+    if (!Number.isFinite(startAt)) return true;
+    if (startAt > endMs) return false; // 还没到开始时间的未来任务
+    if (!todo.end_at) return true;
+    const endAt = new Date(todo.end_at as string).getTime();
+    if (!Number.isFinite(endAt)) return true;
+    return endAt >= startMs;
+  });
+}
+
+/**
+ * 把周期内的任务拆成「已排期」与「未排期 backlog」两堆。
+ *
+ * 未排期 = 未完成且 start_at 为空。此前它们混在报告主列表里、还占着完成率分母，
+ * 导致「本日已完成 3/8」这种数字里混进一堆根本不属于本周期的事。
+ * 现在 backlog 单独成块展示，不参与任何统计。
+ */
+export function splitBacklogTodos<T extends TodoRow>(todos: T[]): {
+  ranged: T[];
+  backlog: T[];
+} {
+  const ranged: T[] = [];
+  const backlog: T[] = [];
+  for (const todo of todos) {
+    const status = (todo as { status?: string }).status;
+    if (status !== "done" && !todo.start_at) backlog.push(todo);
+    else ranged.push(todo);
+  }
+  return { ranged, backlog };
 }
 
 /** URL 中逗号分隔的空间 id；只保留当前用户可见的空间 */

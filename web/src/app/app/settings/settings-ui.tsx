@@ -16,12 +16,7 @@ export function SettingsSection({
   danger?: boolean;
 }) {
   return (
-    <section
-      className={[
-        "rounded-xl border bg-white p-5",
-        danger ? "border-red-200" : "border-[var(--border-muted)]",
-      ].join(" ")}
-    >
+    <section className="border-t border-[var(--border-muted)] py-5 first:border-t-0 first:pt-0 last:pb-0">
       <header>
         <h2
           className={[
@@ -76,6 +71,46 @@ export function fieldClass(disabled = false) {
     .join(" ");
 }
 
+/** 开关：用 role="switch" 表达语义，读屏与键盘都可用 */
+export function SettingsToggle({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={[
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200",
+        checked
+          ? "border-[#2f5f8f] bg-[#2f5f8f]"
+          : "border-[var(--border-muted)] bg-[var(--surface-muted)]",
+        disabled ? "opacity-40" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <span
+        className={[
+          "inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200",
+          checked ? "translate-x-6" : "translate-x-1",
+        ].join(" ")}
+      />
+    </button>
+  );
+}
+
 /** 底部保存栏：有改动才亮按钮，保存后显示结果 */
 export function SettingsFooter({
   dirty,
@@ -91,7 +126,7 @@ export function SettingsFooter({
   saveText?: string;
 }) {
   return (
-    <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] mt-4 flex flex-wrap md:bottom-0 items-center justify-between gap-3 rounded-xl border border-[var(--border-muted)] bg-white/95 px-4 py-3 shadow-[0_-6px_16px_-12px_rgba(0,0,0,0.35)] backdrop-blur">
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-muted)] pt-4">
       <p className="text-xs text-[var(--text-muted)]">
         {dirty ? "有未保存的更改" : msg || "暂无更改"}
       </p>

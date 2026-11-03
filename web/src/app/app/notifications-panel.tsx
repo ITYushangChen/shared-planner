@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { emitNotificationsChanged } from "@/lib/notify-events";
 import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
+import {
+  filterNotifications,
+  loadNotificationPrefs,
+} from "@/lib/notification-prefs";
 
 type NotificationRow = {
   id: string;
@@ -29,6 +33,7 @@ type ResolutionRow = {
   status: string;
   creator_id: string;
   user_id: string;
+  escalated_to: string | null;
   conflicting_todo_ids: string[];
   note: string | null;
 };
@@ -62,6 +67,9 @@ export function NotificationsPanel() {
     {},
   );
   const [myId, setMyId] = useState<string | null>(null);
+  const [ownerAdminBySpace, setOwnerAdminBySpace] = useState<
+    Record<string, boolean>
+  >({});
   const [msg, setMsg] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [escalateId, setEscalateId] = useState<string | null>(null);
@@ -99,20 +107,45 @@ export function NotificationsPanel() {
         const { data } = await q;
         notes = (data as NotificationRow[]) ?? [];
       }
+      // 按通知偏好过滤：关掉的类型不进消息中心
+      const prefs = await loadNotificationPrefs(supabase, user.id);
+      notes = filterNotifications(notes, prefs);
       setItems(notes);
 
       const { data: res } = await supabase
         .from("conflict_resolutions")
         .select(
-          "id, todo_id, space_id, status, creator_id, user_id, conflicting_todo_ids, note",
+          "id, todo_id, space_id, status, creator_id, user_id, escalated_to, conflicting_todo_ids, note",
         )
-        .or(`user_id.eq.${user.id},creator_id.eq.${user.id}`)
+        .or(`user_id.eq.${user.id},creator_id.eq.${user.id},escalated_to.eq.${user.id}`)
         .in("status", ["pending", "escalated"])
         .order("created_at", { ascending: false })
         .limit(20);
 
       const resolutionsRows = (res as ResolutionRow[]) ?? [];
       setResolutions(resolutionsRows);
+
+      // 哪些空间存在「非自己的 owner/admin」——决定 samePerson 冲突能否升级
+      const spaceIds = Array.from(
+        new Set(
+          resolutionsRows
+            .map((r) => r.space_id)
+            .filter((s): s is string => Boolean(s)),
+        ),
+      );
+      const oaMap: Record<string, boolean> = {};
+      if (spaceIds.length > 0) {
+        const { data: oa } = await supabase
+          .from("space_members")
+          .select("space_id, user_id")
+          .in("space_id", spaceIds)
+          .in("role", ["owner", "admin"]);
+        for (const row of (oa as { space_id: string; user_id: string }[]) ??
+          []) {
+          if (row.user_id !== user.id) oaMap[row.space_id] = true;
+        }
+      }
+      setOwnerAdminBySpace(oaMap);
 
       // 拉齐冲突相关任务：空间名 + 标题
       const idSet = new Set<string>();
@@ -366,14 +399,14 @@ export function NotificationsPanel() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="rounded-xl bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800"
+            className="rounded-xl border border-[#2f5f8f] bg-[#2f5f8f] px-3 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-[#15487d] hover:border-[#15487d]"
             onClick={() => void markAllRead()}
           >
             一键已读
           </button>
           <button
             type="button"
-            className="rounded-xl border border-[#2f5f8f]/55 px-3 py-1.5 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
+            className="rounded-xl border border-[#2f5f8f]/55 bg-white px-3 py-1.5 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
             onClick={() => {
               const next = !showHistory;
               setShowHistory(next);
@@ -398,6 +431,8 @@ export function NotificationsPanel() {
               const iAmAssignee = r.user_id === myId;
               const iAmCreator = r.creator_id === myId;
               const samePerson = r.creator_id === r.user_id;
+              const canEscalate =
+                !samePerson || Boolean(ownerAdminBySpace[r.space_id ?? ""]);
               const primary = todoById[r.todo_id];
               const others = (r.conflicting_todo_ids ?? []).filter(
                 (id) => id !== r.todo_id,
@@ -483,12 +518,12 @@ export function NotificationsPanel() {
                       <>
                         <button
                           type="button"
-                          className="rounded-lg bg-zinc-900 px-2 py-1 text-xs font-medium text-white transition-colors duration-200 hover:bg-zinc-800"
+                          className="rounded-lg border border-[#2f5f8f] bg-[#2f5f8f] px-2 py-1 text-xs font-medium text-white transition-colors duration-200 hover:bg-[#15487d] hover:border-[#15487d]"
                           onClick={() => void selfResolve(r.id)}
                         >
                           {samePerson ? "已改时段，确认解决" : "自己解决"}
                         </button>
-                        {!samePerson ? (
+                        {canEscalate ? (
                           <button
                             type="button"
                             className="rounded-lg border border-[#2f5f8f]/55 bg-white px-2 py-1 text-xs font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
@@ -497,12 +532,14 @@ export function NotificationsPanel() {
                               setEscalateNote("");
                             }}
                           >
-                            发给创建人
+                            {samePerson ? "请空间管理员处理" : "发给创建人"}
                           </button>
                         ) : null}
                         <p className="w-full text-[10px] text-zinc-400">
                           {samePerson
-                            ? "这是你创建的任务：请先在日历修改重叠时段，再点确认（不会另发消息给他人）"
+                            ? (canEscalate
+                                ? "这是你创建的任务，但空间有管理员可协助：点「请空间管理员处理」并填原因"
+                                : "这是你创建的任务：请先在日历修改重叠时段，再点确认（不会另发消息给他人）")
                             : "「自己解决」：先改时段再确认，不会通知创建人；「发给创建人」才会通知对方（需填原因）"}
                         </p>
                         {escalateId === r.id ? (
@@ -520,14 +557,14 @@ export function NotificationsPanel() {
                             <div className="flex gap-1">
                               <button
                                 type="button"
-                                className="rounded-lg bg-zinc-900 px-2 py-1 text-xs font-medium text-white transition-colors duration-200 hover:bg-zinc-800"
+                                className="rounded-lg border border-[#2f5f8f] bg-[#2f5f8f] px-2 py-1 text-xs font-medium text-white transition-colors duration-200 hover:bg-[#15487d] hover:border-[#15487d]"
                                 onClick={() => void submitEscalate()}
                               >
                                 确认发送
                               </button>
                               <button
                                 type="button"
-                                className="rounded-lg border border-[#2f5f8f]/55 px-2 py-1 text-xs text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
+                                className="rounded-lg border border-[#2f5f8f]/55 bg-white px-2 py-1 text-xs font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
                                 onClick={() => {
                                   setEscalateId(null);
                                   setEscalateNote("");
@@ -540,7 +577,7 @@ export function NotificationsPanel() {
                         ) : null}
                       </>
                     ) : null}
-                    {iAmCreator && r.status === "escalated" ? (
+                    {(iAmCreator || r.escalated_to === myId) && r.status === "escalated" ? (
                       <button
                         type="button"
                         className="rounded-lg border border-[#2f5f8f]/55 bg-white px-2 py-1 text-xs font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
@@ -550,9 +587,9 @@ export function NotificationsPanel() {
                       </button>
                     ) : null}
                     {/* 冲突不在 notifications 已读里；忽略/关闭走 conflict_resolutions */}
-                    {(iAmAssignee || iAmCreator) &&
+                    {(iAmAssignee || iAmCreator || r.escalated_to === myId) &&
                     (r.status === "pending" || r.status === "escalated") &&
-                    !(iAmCreator && r.status === "escalated") ? (
+                    !((iAmCreator || r.escalated_to === myId) && r.status === "escalated") ? (
                       <button
                         type="button"
                         className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition-colors duration-200 hover:bg-zinc-50"

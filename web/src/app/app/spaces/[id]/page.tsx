@@ -1,368 +1,160 @@
-import Link from "next/link";
-import { Suspense } from "react";
-import { redirect } from "next/navigation";
-import { getAppAuth } from "@/lib/app-data";
-import { FAST_SPACE_NAV } from "@/lib/nav-perf";
-import {
-  TODO_SELECT,
-  TODO_SELECT_LEAN,
-  isAssignedToUser,
-  type SpaceMemberOption,
-  type SpaceNavItem,
-  type TodoRow,
-} from "@/lib/todos";
+"use client";
+
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import type { SpaceMemberOption, SpaceNavItem, TodoRow } from "@/lib/todos";
 import type { InviteRow } from "@/lib/invites";
+import { prefetchSpaceCalendarTodos } from "@/lib/space-data-cache";
+import {
+  getCachedSpaceBootstrap,
+  loadSpaceBootstrap,
+  type SpaceBootstrap,
+} from "@/lib/space-bootstrap";
 import { BackToAppButton } from "../../back-to-app-button";
 import { SpaceWorkspace } from "../../space-workspace";
 import { DeferredTodosRealtime } from "../../deferred-todos-realtime";
 import { SpaceManageChrome } from "./space-manage-chrome";
 
-type Props = {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ view?: string; assignee?: string; panel?: string }>;
-};
+/**
+ * 空间详情页（客户端组件 + 一次取全量）。
+ *
+ * 性能要点（2026-11-02 实测优化）：
+ * 1. 首屏数据由 get_space_bootstrap 一次 RPC 返回（空间/角色/时区/成员/邀请），
+ *    不再是「验登录 → 成员关系 → 时区 → 成员列表」四轮串行跨境往返。
+ * 2. 待办在发起 bootstrap 的同时并行预取（prefetchSpaceCalendarTodos），
+ *    SpaceWorkspace 挂载时直接命中 inflight/缓存，不再多等一轮。
+ * 3. 结果按 space_id 缓存：切回看过的空间立即渲染，后台静默刷新。
+ * 4. 切换期间保留旧内容 + 顶部细进度条，不再整块显示「加载空间…」。
+ */
+export default function SpaceDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = params?.id;
+  const [data, setData] = useState<SpaceBootstrap | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [pending, setPending] = useState(true);
+  const hasContentRef = useRef(false);
 
-const ACTIVE_TODO_LIMIT = 1000;
-const SCHEDULED_LIMIT = 1000;
-const UNSCHEDULED_LIMIT = 500;
-const DONE_TODO_LIMIT = 500;
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const cached = getCachedSpaceBootstrap(id);
+    if (cached) {
+      hasContentRef.current = true;
+      setData(cached);
+      setDenied(false);
+      setPending(false);
+    } else {
+      // 无缓存：有旧空间内容就继续显示旧内容，只挂顶部进度条，避免白屏
+      setPending(true);
+    }
 
-function parseSpaceView(raw: string | undefined): "boards" | "calendar" | "list" {
-  if (raw === "boards" || raw === "list") return raw;
-  return "calendar";
-}
+    // 待办与 bootstrap 并行拉，省掉一轮串行往返
+    prefetchSpaceCalendarTodos(id);
 
-export default async function SpaceDetailPage({ params, searchParams }: Props) {
-  const { id } = await params;
-  const sp = await searchParams;
-  const view = parseSpaceView(sp.view);
-
-  const { supabase, user } = await getAppAuth();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const emptyInvites = { data: [] as InviteRow[] };
-
-  // 成员校验与数据并行（RLS 会挡住无权限的 todos）
-  const membershipPromise = supabase
-    .from("space_members")
-    .select(
-      "role, spaces(id, name, description, kind, owner_id, avatar_url, visibility)",
-    )
-    .eq("space_id", id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  const membersPromise = supabase
-    .from("space_members")
-    .select("user_id, role, profiles(display_name, email)")
-    .eq("space_id", id);
-
-  const profilePromise = supabase
-    .from("profiles")
-    .select("timezone")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (FAST_SPACE_NAV) {
-    // 日历 / 总览 / 列表：只等成员校验；待办与成员客户端补
-    const membershipRes = await membershipPromise;
-    const denied = accessDenied(membershipRes.data);
-    if (denied) return denied;
-    const { membership, space } = deniedOrSpace(membershipRes.data)!;
-    return renderSpacePage({
-      space,
-      membershipRole: membership.role,
-      userId: user.id,
-      canManage:
-        membership.role === "owner" || membership.role === "admin",
-      canAssign:
-        membership.role === "owner" || membership.role === "admin",
-      isOwner:
-        membership.role === "owner" || space.owner_id === user.id,
-      membersRes: { data: [] },
-      profileRes: { data: null },
-      invitesRes: emptyInvites,
-      active: [],
-      completed: [],
-      deferTodos: true,
-      deferMembers: true,
+    void loadSpaceBootstrap(id, {
+      onData: (next) => {
+        if (cancelled) return;
+        hasContentRef.current = true;
+        setData(next);
+        setDenied(false);
+        setPending(false);
+      },
+    }).then((result) => {
+      if (cancelled) return;
+      if (!result) {
+        // 有旧内容时不误判为「被移出空间」（网络抖动也会返回空）
+        if (!hasContentRef.current) setDenied(true);
+        setPending(false);
+      }
     });
-  }
 
-  if (view === "calendar") {
-    // 旧行为：成员 + 已排期/未排期一并 SSR
-    const leanMembersPromise = supabase
-      .from("space_members")
-      .select("user_id, role, profiles(display_name)")
-      .eq("space_id", id);
-
-    const [membershipRes, membersRes, scheduledRes, unscheduledRes] =
-      await Promise.all([
-        membershipPromise,
-        leanMembersPromise,
-        supabase
-          .from("todos")
-          .select(TODO_SELECT_LEAN)
-          .eq("space_id", id)
-          .neq("status", "done")
-          .not("start_at", "is", null)
-          .order("start_at", { ascending: true })
-          .limit(SCHEDULED_LIMIT),
-        supabase
-          .from("todos")
-          .select(TODO_SELECT_LEAN)
-          .eq("space_id", id)
-          .neq("status", "done")
-          .is("start_at", null)
-          .order("created_at", { ascending: false })
-          .limit(UNSCHEDULED_LIMIT),
-      ]);
-
-    const denied = accessDenied(membershipRes.data);
-    if (denied) return denied;
-
-    const { membership, space } = deniedOrSpace(membershipRes.data)!;
-    const scheduled = (scheduledRes.data ?? []) as unknown as TodoRow[];
-    const unscheduled = (unscheduledRes.data ?? []) as unknown as TodoRow[];
-
-    return renderSpacePage({
-      space,
-      membershipRole: membership.role,
-      userId: user.id,
-      canManage:
-        membership.role === "owner" || membership.role === "admin",
-      canAssign:
-        membership.role === "owner" || membership.role === "admin",
-      isOwner:
-        membership.role === "owner" || space.owner_id === user.id,
-      membersRes,
-      profileRes: { data: null },
-      invitesRes: emptyInvites,
-      active: [...scheduled, ...unscheduled],
-      completed: [],
-      deferTodos: false,
-      deferMembers: false,
-    });
-  }
-
-  const [
-    membershipRes,
-    membersRes,
-    activeTodosRes,
-    doneTodosRes,
-    profileRes,
-    invitesRes,
-  ] = await Promise.all([
-    membershipPromise,
-    membersPromise,
-    supabase
-      .from("todos")
-      .select(TODO_SELECT)
-      .eq("space_id", id)
-      .neq("status", "done")
-      .order("created_at", { ascending: false })
-      .limit(ACTIVE_TODO_LIMIT),
-    supabase
-      .from("todos")
-      .select(TODO_SELECT)
-      .eq("space_id", id)
-      .eq("status", "done")
-      .order("completed_at", { ascending: false })
-      .limit(DONE_TODO_LIMIT),
-    profilePromise,
-    supabase
-      .from("space_invitations")
-      .select(
-        "id, code, invite_type, max_uses, used_count, expires_at, status, created_at",
-      )
-      .eq("space_id", id)
-      .order("created_at", { ascending: false }),
-  ]);
-
-  const denied = accessDenied(membershipRes.data);
-  if (denied) return denied;
-
-  const { membership, space } = deniedOrSpace(membershipRes.data)!;
-  const canManage =
-    membership.role === "owner" || membership.role === "admin";
-
-  return renderSpacePage({
-    space,
-    membershipRole: membership.role,
-    userId: user.id,
-    canManage,
-    canAssign: canManage,
-    isOwner: membership.role === "owner" || space.owner_id === user.id,
-    membersRes,
-    profileRes,
-    invitesRes: canManage ? invitesRes : emptyInvites,
-    active: (activeTodosRes.data ?? []) as unknown as TodoRow[],
-    completed: (doneTodosRes.data ?? []) as unknown as TodoRow[],
-    deferTodos: false,
-    deferMembers: false,
-  });
-}
-
-type MembershipRow = {
-  role: string;
-  spaces: unknown;
-};
-
-type SpaceRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  kind: string;
-  owner_id: string;
-  avatar_url: string | null;
-  visibility: string | null;
-};
-
-function deniedOrSpace(data: MembershipRow | null) {
-  if (!data) return null;
-  const space = data.spaces as SpaceRow | null;
-  if (!space) return null;
-  return { membership: data, space };
-}
-
-function accessDenied(data: MembershipRow | null) {
-  if (deniedOrSpace(data)) return null;
-  return (
-    <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 p-4 md:p-6">
-      <h1 className="text-2xl font-semibold text-zinc-900">无法访问该空间</h1>
-      <p className="text-sm text-zinc-600">
-        你可能已被移出该空间，或邀请尚未生效。请返回总览或使用邀请码重新加入。
-      </p>
-      <div className="flex flex-wrap gap-3">
-        <BackToAppButton />
-        <Link
-          href="/app/join"
-          className="inline-flex rounded-xl border border-[#2f5f8f]/55 bg-white px-4 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
-        >
-          输入邀请码加入
-        </Link>
-      </div>
-    </main>
-  );
-}
-
-function renderSpacePage({
-  space,
-  membershipRole,
-  userId,
-  canManage,
-  canAssign,
-  isOwner,
-  membersRes,
-  profileRes,
-  invitesRes,
-  active,
-  completed,
-  deferTodos = false,
-  deferMembers = false,
-}: {
-  space: SpaceRow;
-  membershipRole: string;
-  userId: string;
-  canManage: boolean;
-  canAssign: boolean;
-  isOwner: boolean;
-  membersRes: { data: unknown[] | null };
-  profileRes: { data: { timezone: string | null } | null };
-  invitesRes: { data: InviteRow[] | null | InviteRow[] };
-  active: TodoRow[];
-  completed: TodoRow[];
-  /** true：壳先出，待办客户端补（见 FAST_SPACE_NAV） */
-  deferTodos?: boolean;
-  /** true：成员列表客户端补 */
-  deferMembers?: boolean;
-}) {
-  const membersRaw = (membersRes.data ?? []) as {
-    user_id: string;
-    role: string;
-    profiles: unknown;
-  }[];
-
-  const memberOptions: SpaceMemberOption[] = membersRaw.map((m) => {
-    const profile = m.profiles as {
-      display_name: string;
-      email: string | null;
-    } | null;
-    return {
-      user_id: m.user_id,
-      display_name: profile?.display_name ?? "成员",
-      email: profile?.email ?? null,
+    return () => {
+      cancelled = true;
     };
-  });
+  }, [id]);
 
-  const memberRows = membersRaw.map((m) => {
-    const profile = m.profiles as {
-      display_name: string;
-      email: string | null;
-    } | null;
-    return {
-      user_id: m.user_id,
-      role: m.role,
-      display_name: profile?.display_name ?? "成员",
-      email: profile?.email ?? null,
-    };
-  });
+  if (!id) return null;
 
-  const invites = (invitesRes.data ?? []) as InviteRow[];
-
-  let filteredActive = active;
-  let filteredCompleted = completed;
-  if (!canManage) {
-    filteredActive = active.filter((t) => isAssignedToUser(t, userId));
-    filteredCompleted = completed.filter((t) => isAssignedToUser(t, userId));
+  if (denied) {
+    return (
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 p-4 md:p-6">
+        <h1 className="text-2xl font-semibold text-zinc-900">无法访问该空间</h1>
+        <p className="text-sm text-zinc-600">
+          你可能已被移出该空间，或邀请尚未生效。请返回总览或使用邀请码重新加入。
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <BackToAppButton />
+          <a
+            href="/app/join"
+            className="inline-flex rounded-xl border border-[#2f5f8f]/55 bg-white px-4 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
+          >
+            输入邀请码加入
+          </a>
+        </div>
+      </main>
+    );
   }
 
-  const todos = [...filteredActive, ...filteredCompleted];
-  const scheduled = filteredActive.filter((t) => t.start_at);
-  const unscheduled = filteredActive.filter((t) => !t.start_at);
+  if (!data) {
+    return (
+      <main className="flex flex-1 items-center justify-center p-6 text-sm text-[var(--text-muted)]">
+        加载空间…
+      </main>
+    );
+  }
+
+  const { space, role, userId, timezone } = data;
+  const canManage = role === "owner" || role === "admin";
+  const canAssign = canManage;
+  const isOwner = role === "owner" || space.owner_id === userId;
 
   const spaceNav: SpaceNavItem = {
     id: space.id,
     name: space.name,
     kind: space.kind,
-    role: membershipRole,
+    role,
     visibility: space.visibility ?? "private",
   };
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+      {pending ? (
+        <div
+          className="fixed inset-x-0 top-0 z-50 h-0.5 overflow-hidden bg-[#e8f0f7]"
+          aria-hidden="true"
+        >
+          <span className="sp-progress-bar block h-full w-1/3 bg-[#2f5f8f]" />
+        </div>
+      ) : null}
+
       <DeferredTodosRealtime spaceId={space.id} />
 
       <Suspense fallback={null}>
         <SpaceManageChrome
           space={space}
           spaceNav={spaceNav}
-          memberOptions={memberOptions}
-          memberRows={memberRows}
-          invites={invites}
+          memberOptions={data.memberOptions as SpaceMemberOption[]}
+          memberRows={data.memberRows}
+          invites={data.invites as InviteRow[]}
           canManage={canManage}
           canAssign={canAssign}
           isOwner={isOwner}
           currentUserId={userId}
-          currentRole={membershipRole}
-          timezone={profileRes.data?.timezone ?? undefined}
-          deferMembers={deferMembers}
+          currentRole={role}
+          timezone={timezone ?? undefined}
         >
           <SpaceWorkspace
             space={spaceNav}
-            todos={filteredActive}
-            allTodos={todos}
-            scheduled={scheduled}
-            unscheduled={unscheduled}
-            completed={filteredCompleted}
-            members={memberOptions}
+            todos={[] as TodoRow[]}
+            allTodos={[] as TodoRow[]}
+            scheduled={[] as TodoRow[]}
+            unscheduled={[] as TodoRow[]}
+            completed={[] as TodoRow[]}
+            members={[] as SpaceMemberOption[]}
             canAssign={canAssign}
             currentUserId={userId}
-            deferTodos={deferTodos}
-            deferMembers={deferMembers}
+            deferTodos
+            deferMembers
             listTitle={
               canManage
                 ? "待办列表（筛选 / 排序）"

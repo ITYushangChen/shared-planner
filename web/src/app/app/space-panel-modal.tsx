@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import type { InviteRow } from "@/lib/invites";
 import type { SpaceNavItem } from "@/lib/todos";
@@ -10,6 +9,7 @@ import {
   SpaceMembersPanel,
   type MemberRow,
 } from "./spaces/[id]/space-members-panel";
+import { Modal } from "./ui-modal";
 
 type Mode = "invites" | "members";
 
@@ -125,18 +125,18 @@ export function SpacePanelModal({
     };
   }, [spaceId, mode]);
 
-  if (typeof document === "undefined") return null;
-
   const title = mode === "invites" ? "邀请成员" : "成员管理";
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[6vh]"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={title}
+      zClass="z-[80]"
+      overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[6vh]"
+      className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
     >
-      <div className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
+      <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
             {title}
@@ -198,7 +198,6 @@ export function SpacePanelModal({
           </>
         )}
       </div>
-    </div>,
-    document.body,
+    </Modal>
   );
 }

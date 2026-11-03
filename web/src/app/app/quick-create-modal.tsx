@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
+import { Modal } from "./ui-modal";
 import { QuickCreateTodo } from "./quick-create-todo";
 import { toggleBtnClass } from "./toggle-btn-class";
 
@@ -37,43 +37,30 @@ export function QuickCreateModal({
 
   if (spaces.length === 0) return null;
 
-  const overlay =
-    open && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setOpen(false);
-            }}
-          >
-            <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-zinc-900">
-                  快速创建待办
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="text-sm text-zinc-500 hover:text-zinc-800"
-                >
-                  关闭
-                </button>
-              </div>
-              <QuickCreateTodo
-                spaces={spaces}
-                defaultSpaceId={defaultSpaceId}
-                members={members}
-                membersBySpace={membersBySpace}
-                canAssign={canAssign}
-                allowOverview={allowOverview}
-                bare
-                onCreated={() => setOpen(false)}
-              />
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
+  const overlay = (
+    <Modal open={open} onClose={() => setOpen(false)} title="快速创建待办" variant="bottom">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-base font-semibold text-zinc-900">快速创建待办</h2>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-sm text-zinc-500 hover:text-zinc-800"
+        >
+          关闭
+        </button>
+      </div>
+      <QuickCreateTodo
+        spaces={spaces}
+        defaultSpaceId={defaultSpaceId}
+        members={members}
+        membersBySpace={membersBySpace}
+        canAssign={canAssign}
+        allowOverview={allowOverview}
+        bare
+        onCreated={() => setOpen(false)}
+      />
+    </Modal>
+  );
 
   return (
     <>

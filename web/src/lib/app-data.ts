@@ -3,13 +3,23 @@ import { createClient } from "@/lib/supabase/server";
 import { isAutoDefaultSpace } from "@/lib/spaces";
 import type { SpaceNavItem } from "@/lib/todos";
 
-/** 同一次 RSC 请求内复用 auth，避免 layout/page 重复 getUser */
+/**
+ * 同一次 RSC 请求内复用 auth，避免 layout/page 重复 getUser。
+ *
+ * ⚠️ 用 getSession() 而不是 getUser()（2026-11-02）：
+ * getUser() 会真的向 Supabase Auth 发一次网络请求（本地预览时是跨境往返 300ms+），
+ * 而 /app 的 layout 是服务端组件，**每次客户端软导航都会重跑一遍**，
+ * 于是每次点空间都要等这一趟。getSession() 只解本地 cookie 里的 JWT，零网络。
+ *
+ * 安全性不变：真正决定能读到什么数据的是 Postgres 的 RLS（用同一个 JWT 校验签名），
+ * 这里只用来判断「有没有登录 / 是谁」。token 过期时 getSession 会自行刷新。
+ */
 export const getAppAuth = cache(async () => {
   const supabase = await createClient();
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return { supabase, user };
+    data: { session },
+  } = await supabase.auth.getSession();
+  return { supabase, user: session?.user ?? null };
 });
 
 type MembershipRow = {

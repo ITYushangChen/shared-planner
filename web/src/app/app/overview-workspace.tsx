@@ -233,10 +233,17 @@ export function OverviewWorkspace({
 
     const { start, end } = getOverviewBounds(calRange);
     const windowStart = new Date(start.getTime() - 2 * 24 * 60 * 60 * 1000);
+    // 与 /app/page.tsx 一致：改成区间相交，避免跨周期长任务在日历上消失
+    const windowStartIso = windowStart.toISOString();
+    const calStartIso = start.toISOString();
+    const calEndIso = end.toISOString();
     const supabase = createClient();
     const spaceIds = spaceIdsKey.split(",").filter(Boolean);
     if (rangeChanged) setScheduledRefreshing(true);
     void (async () => {
+      // ⚠️ 此前整个 async 没有 catch：一旦 getUser() 或查询 reject，
+      // setScheduledRefreshing(false) 永不执行，日历区永久停在「加载中」灰态。
+      try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -246,8 +253,8 @@ export function OverviewWorkspace({
         .in("space_id", spaceIds)
         .neq("status", "done")
         .not("start_at", "is", null)
-        .gte("start_at", windowStart.toISOString())
-        .lt("start_at", end.toISOString())
+        .lt("start_at", calEndIso)
+        .or(`start_at.gte.${windowStartIso},end_at.gte.${calStartIso}`)
         .order("start_at", { ascending: true })
         .limit(SCHEDULED_CLIENT_LIMIT);
       if (cancelled) return;
@@ -263,7 +270,12 @@ export function OverviewWorkspace({
         return isAssignedToUser(t, user.id);
       });
       setScheduledExtra(rows);
-      setScheduledRefreshing(false);
+      } catch {
+        if (cancelled) return;
+        setScheduledExtra([]);
+      } finally {
+        if (!cancelled) setScheduledRefreshing(false);
+      }
     })();
     return () => {
       cancelled = true;

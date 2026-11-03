@@ -1,8 +1,8 @@
 /** 主按钮：近黑实心 */
 export function primaryBtnClass(extra = "") {
   return [
-    "rounded-xl bg-zinc-900 px-3 py-2 text-sm font-medium text-white",
-    "transition-all duration-200 hover:bg-zinc-800 disabled:opacity-50",
+    "rounded-xl bg-[#185FA5] px-3 py-2 text-sm font-medium text-white",
+    "transition-all duration-200 hover:bg-[#15487d] disabled:opacity-50",
     "active:scale-[0.98]",
     extra,
   ]
@@ -14,8 +14,8 @@ export function primaryBtnClass(extra = "") {
 export function primaryPillClass(extra = "") {
   return [
     "shrink-0 rounded-full px-4 py-2 text-sm font-medium text-white",
-    "bg-zinc-900 transition-all duration-200",
-    "hover:bg-zinc-800 active:scale-[0.98]",
+    "bg-[#185FA5] transition-all duration-200",
+    "hover:bg-[#15487d] active:scale-[0.98]",
     extra,
   ]
     .filter(Boolean)
@@ -40,7 +40,7 @@ export function secondaryPillClass(active = false, extra = "") {
     "shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-all duration-200",
     "active:scale-[0.98]",
     active
-      ? "bg-zinc-900 text-white hover:bg-zinc-800"
+      ? "bg-[#185FA5] text-white hover:bg-[#15487d]"
       : "border border-[#2f5f8f]/55 bg-white text-[#2f5f8f] hover:bg-[#e8f0f7]",
     extra,
   ]
@@ -54,7 +54,7 @@ export function chipClass(active: boolean) {
     "inline-flex h-8 shrink-0 items-center rounded-full px-3 text-sm font-medium",
     "transition-colors duration-200",
     active
-      ? "bg-zinc-900 text-white"
+      ? "bg-[#185FA5] text-white"
       : "border border-[#2f5f8f]/50 bg-white text-[#2f5f8f] hover:bg-[#e8f0f7]",
   ].join(" ");
 }

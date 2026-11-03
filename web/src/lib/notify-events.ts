@@ -15,6 +15,8 @@ export type NotificationToastDetail = {
   title: string;
   body?: string | null;
   id?: string;
+  /** 通知类型，用于按用户偏好过滤（daily_summary / assigned / conflict / invite） */
+  type?: string;
 };
 
 export function emitNotificationsChanged(detail?: NotificationsChangedDetail) {

@@ -9,11 +9,21 @@ import { secondaryBtnClass } from "../ui-btn-class";
 export function SecurityPanel({ email }: { email: string }) {
   const router = useRouter();
   const supabase = createClient();
+  const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+
+  function genRecoveryCode(): string {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
 
   const dirty = next.length > 0 || confirmPwd.length > 0;
 
@@ -28,8 +38,21 @@ export function SecurityPanel({ email }: { email: string }) {
     e.preventDefault();
     setErr("");
     setMsg("");
+    if (!current) {
+      setErr("请输入当前密码");
+      return;
+    }
     if (next.length < 6) {
-      setErr("密码至少 6 位");
+      setErr("新密码至少 6 位");
+      return;
+    }
+    const types = [
+      /\d/.test(next),
+      /[a-zA-Z]/.test(next),
+      /[^a-zA-Z0-9]/.test(next),
+    ].filter(Boolean).length;
+    if (types < 2) {
+      setErr("新密码至少包含两种：数字、字母、特殊符号");
       return;
     }
     if (next !== confirmPwd) {
@@ -37,12 +60,38 @@ export function SecurityPanel({ email }: { email: string }) {
       return;
     }
     setSaving(true);
+    // 1) 先验证当前密码（re-auth），防止他人误改
+    const { error: reErr } = await supabase.auth.signInWithPassword({
+      email,
+      password: current,
+    });
+    if (reErr) {
+      setSaving(false);
+      setErr("当前密码不正确，请重新输入");
+      return;
+    }
+    // 2) 验证通过后再改密码
     const { error } = await supabase.auth.updateUser({ password: next });
     setSaving(false);
     if (error) {
       setErr(error.message);
       return;
     }
+    // 改密成功后重新生成一次性找回码（旧的立即失效）
+    try {
+      const { data: me } = await supabase.auth.getUser();
+      if (me.user) {
+        const code = genRecoveryCode();
+        await supabase.rpc("set_recovery_code", {
+          p_user_id: me.user.id,
+          p_code: code,
+        });
+        setRecoveryCode(code);
+      }
+    } catch {
+      // 找回码生成失败不影响改密本身
+    }
+    setCurrent("");
     setNext("");
     setConfirmPwd("");
     setMsg("密码已更新，下次登录请使用新密码");
@@ -72,8 +121,18 @@ export function SecurityPanel({ email }: { email: string }) {
         </SettingsSection>
 
         <div className="mt-5">
-          <SettingsSection title="修改密码" desc="修改后立即生效，当前设备保持登录">
-            <SettingsRow label="新密码" hint="至少 6 位">
+          <SettingsSection title="修改密码" desc="为安全起见，需先验证当前密码">
+            <SettingsRow label="当前密码" hint="用于验证是本人操作">
+              <input
+                type="password"
+                className={fieldClass()}
+                value={current}
+                onChange={(e) => setCurrent(e.target.value)}
+                placeholder="请输入当前密码"
+                autoComplete="current-password"
+              />
+            </SettingsRow>
+            <SettingsRow label="新密码" hint="至少 6 位，字母/数字/符号至少两种">
               <input
                 type="password"
                 className={fieldClass()}
@@ -98,6 +157,16 @@ export function SecurityPanel({ email }: { email: string }) {
             ) : null}
             {!err && msg ? (
               <div className="py-3 text-xs text-emerald-700">{msg}</div>
+            ) : null}
+            {recoveryCode ? (
+              <div className="rounded-lg border border-[#2f5f8f]/40 bg-[#e8f0f7] px-3 py-2 text-xs text-[#15487d]">
+                <p className="font-medium">
+                  新的密码找回码（请保存，下次忘记密码时在登录页「忘记密码」使用）：
+                </p>
+                <p className="mt-1 select-all break-all rounded bg-white px-2 py-1 font-mono text-sm text-zinc-900">
+                  {recoveryCode}
+                </p>
+              </div>
             ) : null}
           </SettingsSection>
         </div>

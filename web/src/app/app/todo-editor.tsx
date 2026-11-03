@@ -9,6 +9,7 @@ import {
   emitTodoUpserted,
 } from "@/lib/todo-schedule-events";
 import { suppressTodosRealtimeRefresh } from "@/lib/todos-realtime-gate";
+import { mapDbError, mapDbErrorWith } from "@/lib/error-map";
 import {
   allDayRangeToIso,
   type SpaceMemberOption,
@@ -18,6 +19,7 @@ import { resolveTodoColor } from "@/lib/ui-prefs";
 import { DEFAULT_DEPARTMENT, DEPARTMENT_OPTIONS } from "@/lib/departments";
 import { TodoComments } from "./todo-comments";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
+import { Modal } from "./ui-modal";
 
 function toLocalInput(iso: string | null | undefined) {
   if (!iso) return "";
@@ -128,7 +130,11 @@ export function TodoEditor({
     return () => {
       cancelled = true;
     };
-  }, [todo, open, supabase, hintMessage]);
+    // ⚠️ 依赖不能放 todo 对象本身：realtime 或 props 刷新会换一个「同 id 新引用」，
+    // effect 重跑后把用户正在编辑的标题/时间/指派全部重置，输入内容凭空消失。
+    // 只依赖 todo.id（同一条待办在弹窗打开期间不重新初始化）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todo.id, open, supabase, hintMessage]);
 
   if (!open) return null;
 
@@ -207,20 +213,39 @@ export function TodoEditor({
 
     if (error) {
       setLoading(false);
-      setMsg(error.message);
+      setMsg(mapDbError(error));
       return;
     }
 
     // 仅 owner/admin 可改指派；可不选（未排期可无指派人）。成员不改指派表。
     if (canAssign) {
-      await supabase.from("todo_assignees").delete().eq("todo_id", todo.id);
-      if (assigneeIds.length > 0) {
-        const { error: aerr } = await supabase.from("todo_assignees").insert(
-          assigneeIds.map((user_id) => ({ todo_id: todo.id, user_id })),
+      // ⚠️ 此前 delete 的结果不检查：一旦 delete 成功、后续 insert 失败，
+      // 这条待办的指派人就被永久清空了（真实数据丢失）。
+      // 改为「先插入新指派、再删掉不再需要的」：任何一步失败都不会留下空指派。
+      const { error: delErr } = await supabase
+        .from("todo_assignees")
+        .delete()
+        .eq("todo_id", todo.id)
+        .not(
+          "user_id",
+          "in",
+          `(${assigneeIds.length > 0 ? assigneeIds.join(",") : "00000000-0000-0000-0000-000000000000"})`,
         );
+      if (delErr) {
+        setLoading(false);
+        setMsg(`保存指派人失败：${delErr.message}`);
+        return;
+      }
+      if (assigneeIds.length > 0) {
+        const { error: aerr } = await supabase
+          .from("todo_assignees")
+          .upsert(
+            assigneeIds.map((user_id) => ({ todo_id: todo.id, user_id })),
+            { onConflict: "todo_id,user_id", ignoreDuplicates: true },
+          );
         if (aerr) {
           setLoading(false);
-          setMsg(aerr.message);
+          setMsg(`保存指派人失败：${aerr.message}`);
           return;
         }
       }
@@ -283,39 +308,56 @@ export function TodoEditor({
     }
     const slice = Math.floor(span / n);
 
-    for (let i = 0; i < n; i++) {
+    // ⚠️ 此前是 for 循环里逐段 insert：中途任何一段失败就直接 return，
+    // 已插入的 N 段子任务留在库里变成孤儿，父任务排期也没清 —— 脏数据。
+    // 改成一次性 insert 全部子段（单条 SQL，Postgres 保证原子），
+    // 要么全成、要么全不成。
+    const rows = Array.from({ length: n }, (_, i) => {
       const segStart = new Date(startMs + slice * i);
       const segEnd =
         i === n - 1 ? new Date(endMs) : new Date(startMs + slice * (i + 1));
-      const { data: child, error } = await supabase
-        .from("todos")
-        .insert({
-          space_id: todo.space_id,
-          creator_id: user.id,
-          parent_todo_id: todo.id,
-          title: `${title.trim() || todo.title}（段${i + 1}）`,
-          description: description.trim() || todo.description,
-          priority,
-          department: todo.department ?? DEFAULT_DEPARTMENT,
-          status: "todo",
-          start_at: segStart.toISOString(),
-          end_at: segEnd.toISOString(),
-          is_all_day: false,
-          source: "manual",
-        })
-        .select("id")
-        .single();
-      if (error || !child) {
-        setLoading(false);
-        setMsg(error?.message || "拆段失败");
-        return;
-      }
-      const assign =
-        assigneeIds.length > 0 ? assigneeIds : [user.id];
-      await supabase.from("todo_assignees").insert(
+      return {
+        space_id: todo.space_id,
+        creator_id: user.id,
+        parent_todo_id: todo.id,
+        title: `${title.trim() || todo.title}（段${i + 1}）`,
+        description: description.trim() || todo.description,
+        priority,
+        department: todo.department ?? DEFAULT_DEPARTMENT,
+        status: "todo",
+        start_at: segStart.toISOString(),
+        end_at: segEnd.toISOString(),
+        is_all_day: false,
+        source: "manual",
+      };
+    });
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from("todos")
+      .insert(rows)
+      .select("id");
+    const children = (inserted ?? []) as Array<{ id: string }>;
+
+    if (insertErr || children.length === 0) {
+      setLoading(false);
+      setMsg(mapDbErrorWith("拆段", insertErr));
+      return;
+    }
+
+    const assign = assigneeIds.length > 0 ? assigneeIds : [user.id];
+    const { error: assignErr } = await supabase.from("todo_assignees").insert(
+      children.flatMap((child) =>
         assign.map((user_id) => ({ todo_id: child.id, user_id })),
-      );
-      await notifyTodoAssignment(child.id);
+      ),
+    );
+    if (assignErr) {
+      // 子任务已建好，指派失败不回滚（不至于丢数据），但要让用户知道
+      setMsg("分段已创建，但指派人保存失败，请到各段里手动指派");
+    }
+
+    // 通知失败不影响主流程
+    for (const child of children) {
+      void notifyTodoAssignment(child.id).catch(() => {});
     }
 
     await supabase
@@ -345,7 +387,7 @@ export function TodoEditor({
       .eq("id", todo.id);
     setLoading(false);
     if (error) {
-      setMsg(error.message);
+      setMsg(mapDbError(error));
       return;
     }
     suppressTodosRealtimeRefresh(6000);
@@ -382,7 +424,7 @@ export function TodoEditor({
       .eq("id", todo.id);
     setLoading(false);
     if (error) {
-      setMsg(error.message);
+      setMsg(mapDbError(error));
       return;
     }
     suppressTodosRealtimeRefresh(6000);
@@ -398,24 +440,34 @@ export function TodoEditor({
 
   async function onDelete() {
     if (!confirm("确定删除该待办？")) return;
+    setLoading(true);
     // 立刻从日历/列表消失，后台再删库
     suppressTodosRealtimeRefresh(6000);
     emitTodoDeleted(todo.id);
-    onClose();
     const { error } = await supabase.from("todos").delete().eq("id", todo.id);
+    setLoading(false);
     if (error) {
+      // ⚠️ 此前先 onClose() 再删库：失败时回滚了数据，但弹窗已卸载，
+      // setMsg 写在一个不再渲染的组件上，用户看到「任务消失又冒出来」却没有任何提示。
+      // 改成删库成功才关闭，失败时弹窗还在、错误可见。
       emitTodoUpserted(todo);
-      setMsg(error.message);
+      setMsg(mapDbErrorWith("删除", error));
       return;
     }
+    onClose();
+    router.refresh();
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-4 md:items-center">
-      <form
-        onSubmit={onSave}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
-      >
+    // 走统一 Modal：补上 role="dialog" / aria-modal / Esc 关闭 / 焦点陷阱
+    <Modal
+      open
+      onClose={onClose}
+      title="编辑待办"
+      zClass="z-[60]"
+      className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+    >
+      <form onSubmit={onSave}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-zinc-900">编辑待办</h3>
           <button type="button" className="text-sm text-zinc-500" onClick={onClose}>
@@ -715,9 +767,11 @@ export function TodoEditor({
               删除
             </button>
           </div>
-          {msg ? <p className="text-sm text-zinc-500">{msg}</p> : null}
+          <div aria-live="polite" role="status">
+            {msg ? <p className="text-sm text-zinc-600">{msg}</p> : null}
+          </div>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

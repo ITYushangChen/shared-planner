@@ -18,6 +18,7 @@ import {
 import type { InviteRow } from "@/lib/invites";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
 import { EditSpaceForm } from "./edit-space-form";
+import { ViewSwitcher } from "../../view-switcher";
 import { SpaceInvites } from "./space-invites";
 import { SpaceMembersPanel } from "./space-members-panel";
 
@@ -158,8 +159,8 @@ export function SpaceManageChrome({
 
   return (
     <>
-      {isPublic ? (
-        <header className="flex flex-wrap items-center gap-2">
+      <header className="flex flex-wrap items-center gap-2">
+        {isPublic ? (
           <label className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
             <span className="shrink-0">人员</span>
             <select
@@ -175,8 +176,11 @@ export function SpaceManageChrome({
               ))}
             </select>
           </label>
-        </header>
-      ) : null}
+        ) : null}
+        <div className="ml-auto shrink-0">
+          <ViewSwitcher />
+        </div>
+      </header>
 
       {panel ? (
         <div

@@ -10,6 +10,8 @@ import {
 import { DeferredTodosRealtime } from "./deferred-todos-realtime";
 import { OverviewPageHeader } from "./overview-page-header";
 import { OverviewWorkspace } from "./overview-workspace";
+import { EmptySpaceGuide } from "./empty-space-guide";
+import { mapDbError } from "@/lib/error-map";
 
 const ACTIVE_TODO_LIMIT = 1000;
 const SCHEDULED_LIMIT = 1000;
@@ -73,6 +75,12 @@ export default async function AppOverviewPage({
         : "week";
     const { start, end } = getOverviewBounds(calRange);
     const windowStart = new Date(start.getTime() - 2 * 24 * 60 * 60 * 1000);
+    // ⚠️ 原查询 `start_at >= windowStart AND start_at < end` 会漏掉跨周期长任务
+    // （例如上周开始、本周内结束），它们在日历上直接消失。
+    // 改为「区间相交」：开始早于窗口结束，且（开始不早于窗口前两天 或 结束晚于窗口开始）。
+    const windowStartIso = windowStart.toISOString();
+    const calStartIso = start.toISOString();
+    const calEndIso = end.toISOString();
     const membersPromise =
       spaceIds.length > 0
         ? supabase
@@ -88,8 +96,10 @@ export default async function AppOverviewPage({
             .in("space_id", spaceIds)
             .neq("status", "done")
             .not("start_at", "is", null)
-            .gte("start_at", windowStart.toISOString())
-            .lt("start_at", end.toISOString())
+            .lt("start_at", calEndIso)
+            .or(
+              `start_at.gte.${windowStartIso},end_at.gte.${calStartIso}`,
+            )
             .order("start_at", { ascending: true })
             .limit(SCHEDULED_LIMIT)
         : Promise.resolve(emptyTodos),
@@ -264,12 +274,12 @@ function OverviewShell({
       <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {todosError ? (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            加载待办失败：{todosError.message}
-            {todosError.message.includes("kind")
-              ? " — 请先执行 spaces.kind 迁移 SQL"
-              : ""}
+            加载待办失败：{mapDbError(todosError)}
           </p>
         ) : null}
+
+        {/* 新用户首登：一个空间都没有时，日历区是空的且毫无指引 */}
+        {spaces.length === 0 ? <EmptySpaceGuide /> : null}
 
         <Suspense fallback={null}>
           <OverviewWorkspace

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { Modal } from "./ui-modal";
 import {
   addDays,
   minutesToPeriodIndex,
@@ -222,11 +222,11 @@ export function MobileTimetable({
   return (
     <div className="md:hidden">
       <div className="mb-3 flex flex-col items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg bg-zinc-900 p-0.5">
+        <div className="flex items-center gap-1 rounded-lg border border-[var(--border-muted)] bg-white p-0.5 shadow-sm">
           <button
             type="button"
             aria-label="上一周"
-            className="inline-flex h-9 w-10 items-center justify-center rounded-md text-white"
+            className="inline-flex h-9 w-10 items-center justify-center rounded-md text-[var(--brand-ink)] transition-colors hover:bg-[var(--surface-muted)] active:bg-[var(--brand-soft)]"
             onClick={() => setAnchor(addDays(weekStart, -7))}
           >
             ‹
@@ -234,7 +234,7 @@ export function MobileTimetable({
           <button
             type="button"
             aria-label="下一周"
-            className="inline-flex h-9 w-10 items-center justify-center rounded-md text-white"
+            className="inline-flex h-9 w-10 items-center justify-center rounded-md text-[var(--brand-ink)] transition-colors hover:bg-[var(--surface-muted)] active:bg-[var(--brand-soft)]"
             onClick={() => setAnchor(addDays(weekStart, 7))}
           >
             ›
@@ -242,7 +242,7 @@ export function MobileTimetable({
         </div>
         <button
           type="button"
-          className="rounded-lg bg-zinc-500 px-6 py-1.5 text-sm font-medium text-white"
+          className="rounded-lg border border-[var(--brand)] bg-[var(--brand-soft)] px-6 py-1.5 text-sm font-semibold text-[var(--brand)] transition-colors hover:bg-[#d7e8f8] active:scale-[0.98]"
           onClick={() => setAnchor(new Date())}
         >
           今天
@@ -395,35 +395,39 @@ export function MobileTimetable({
         />
       ) : null}
 
-      {createPrefill && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh]">
-              <div className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold">新建待办</h2>
-                  <button
-                    type="button"
-                    className="text-sm text-[var(--text-muted)]"
-                    onClick={() => setCreatePrefill(null)}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <QuickCreateTodo
-                  spaces={spaces}
-                  defaultSpaceId={defaultSpaceId || spaces[0]?.id}
-                  bare
-                  initialStartLocal={createPrefill.startLocal}
-                  initialEndLocal={createPrefill.endLocal}
-                  initialIsAllDay={createPrefill.isAllDay}
-                  initialStartDate={createPrefill.startDate}
-                  onCreated={() => setCreatePrefill(null)}
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {createPrefill ? (
+        <Modal
+          open
+          onClose={() => setCreatePrefill(null)}
+          title="新建待办"
+          zClass="z-[80]"
+          overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
+          className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
+        >
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">新建待办</h2>
+              <button
+                type="button"
+                className="text-sm text-[var(--text-muted)]"
+                onClick={() => setCreatePrefill(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <QuickCreateTodo
+              spaces={spaces}
+              defaultSpaceId={defaultSpaceId || spaces[0]?.id}
+              bare
+              initialStartLocal={createPrefill.startLocal}
+              initialEndLocal={createPrefill.endLocal}
+              initialIsAllDay={createPrefill.isAllDay}
+              initialStartDate={createPrefill.startDate}
+              onCreated={() => setCreatePrefill(null)}
+            />
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

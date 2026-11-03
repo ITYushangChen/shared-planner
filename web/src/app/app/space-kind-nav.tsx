@@ -59,9 +59,11 @@ export function SpaceKindNav({
         const stored = localStorage.getItem(key);
         if (stored === "0") next[g.kind] = false;
         else if (stored === "1") next[g.kind] = true;
-        else next[g.kind] = false; // 默认收起：先只看到工作区/家庭区等标题
+        // 默认展开：此前默认收起，新用户进来看见一排折叠标题、一个空间都看不到，
+        // 误以为「还没有空间」。用户手动收起过则尊重其选择（stored === "0"）。
+        else next[g.kind] = true;
       } catch {
-        next[g.kind] = false;
+        next[g.kind] = true;
       }
     }
     setOpenMap(next);

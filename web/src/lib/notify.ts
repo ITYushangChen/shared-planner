@@ -28,6 +28,7 @@ export async function notifyTodoAssignment(todoId: string) {
       title: "日程冲突提醒",
       body: `检测到 ${result.conflict_resolutions} 处冲突，请到消息中心处理`,
       id: `conflict-${todoId}-${Date.now()}`,
+      type: "conflict",
     });
   }
 

@@ -4,11 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthUser } from "@/lib/auth-user";
 import {
   NOTIFICATIONS_CHANGED,
   type NotificationsChangedDetail,
 } from "@/lib/notify-events";
 import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
+import {
+  disabledNotificationTypes,
+  loadNotificationPrefs,
+} from "@/lib/notification-prefs";
 
 type BellProps = {
   iconOnly?: boolean;
@@ -30,17 +35,25 @@ export function NotificationBell({
   const loadRef = useRef<() => Promise<void>>(async () => {});
 
   const load = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    // 用缓存的会话读用户（零网络），不再每次导航都打 /auth/v1/user
+    const user = await getAuthUser();
     if (!user) return;
 
+    const prefs = await loadNotificationPrefs(supabase, user.id);
+    const disabled = disabledNotificationTypes(prefs);
+
+    // 关掉的类型不进角标：在 SQL 层排除，保证 count 精确
+    let noteQuery = supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("is_read", false);
+    if (disabled.length > 0) {
+      noteQuery = noteQuery.not("type", "in", `(${disabled.join(",")})`);
+    }
+
     const [notesRes, conflictsRes] = await Promise.all([
-      supabase
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("is_read", false),
+      noteQuery,
       supabase
         .from("conflict_resolutions")
         .select("id", { count: "exact", head: true })
@@ -95,9 +108,7 @@ export function NotificationBell({
     let delayTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function setup() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const user = await getAuthUser();
       if (!user || cancelled) return;
 
       const name = `notifications-bell-${user.id}-${rail ? "rail" : "mobile"}`;
@@ -152,7 +163,7 @@ export function NotificationBell({
       className="h-5 w-5"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth="1.7"
     >
       <path
         strokeLinecap="round"
@@ -177,7 +188,7 @@ export function NotificationBell({
 
   if (rail) {
     return (
-      <span className="relative inline-flex text-white" aria-hidden>
+      <span className="relative inline-flex text-current" aria-hidden>
         {icon}
         {badge}
       </span>

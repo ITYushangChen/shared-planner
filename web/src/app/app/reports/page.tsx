@@ -5,10 +5,12 @@ import { getAppAuth, getMySpaceNav, visibleSpaceNav } from "@/lib/app-data";
 import { TODO_SELECT, type TodoRow } from "@/lib/todos";
 import {
   buildReportData,
+  filterTodosForRange,
   parseReportInput,
   parseReportSpaceIds,
   parseReportType,
   resolveReportRange,
+  splitBacklogTodos,
   stripReportData,
 } from "@/lib/reports";
 
@@ -59,7 +61,12 @@ export default async function ReportsPage({
       ? selectedSpaces.map((s) => s.id)
       : spaces.map((s) => s.id);
 
-  // 所选空间全部任务：进行中/未开始（含未排期）+ 已完成（按完成时间倒序）
+  // ⚠️ 此前完全没有时间条件：每次进报告页都拉该空间全部历史任务
+  // （两千条且带 description，数 MB 载荷），「日报」里混着几个月前的待办。
+  // 现在先在 SQL 侧粗筛（同时大幅瘦身），再在 JS 侧用区间相交精筛。
+  const startIso = range.start.toISOString();
+  const endIso = range.end.toISOString();
+
   const [activeRes, doneRes] =
     spaceIds.length > 0
       ? await Promise.all([
@@ -68,6 +75,8 @@ export default async function ReportsPage({
             .select(TODO_SELECT)
             .in("space_id", spaceIds)
             .neq("status", "done")
+            // 未排期（start_at 为空）始终保留；其余只保留「已开始且未落在未来」的
+            .or(`start_at.is.null,start_at.lte.${endIso}`)
             .order("created_at", { ascending: false })
             .limit(ACTIVE_TODO_LIMIT),
           supabase
@@ -75,28 +84,49 @@ export default async function ReportsPage({
             .select(TODO_SELECT)
             .in("space_id", spaceIds)
             .eq("status", "done")
+            // 已完成任务按完成时间落在本周期内
+            .gte("completed_at", startIso)
+            .lte("completed_at", endIso)
             .order("completed_at", { ascending: false })
             .limit(DONE_TODO_LIMIT),
         ])
       : [emptyTodos, emptyTodos];
 
   const fetchError = activeRes.error ?? doneRes.error;
-  const rawTodos = [
-    ...((activeRes.data ?? []) as unknown as TodoRow[]),
-    ...((doneRes.data ?? []) as unknown as TodoRow[]),
-  ];
+  const rawTodos = filterTodosForRange(
+    [
+      ...((activeRes.data ?? []) as unknown as TodoRow[]),
+      ...((doneRes.data ?? []) as unknown as TodoRow[]),
+    ],
+    range.start,
+    range.end,
+  );
   const taskLimitReached =
     (activeRes.data?.length ?? 0) >= ACTIVE_TODO_LIMIT ||
     (doneRes.data?.length ?? 0) >= DONE_TODO_LIMIT;
+
+  // 未排期 backlog 单独成块：不计入完成率与统计卡，只在报告底部列出提醒排期
+  const { ranged, backlog } = splitBacklogTodos(rawTodos);
 
   const data = buildReportData({
     type,
     range,
     selectedSpaces,
-    todos: rawTodos,
+    todos: ranged,
     canAssignBySpace,
     userId: user.id,
   });
+  const backlogData =
+    backlog.length > 0
+      ? buildReportData({
+          type,
+          range,
+          selectedSpaces,
+          todos: backlog,
+          canAssignBySpace,
+          userId: user.id,
+        })
+      : null;
 
   return (
     <main className="flex flex-1 flex-col">
@@ -107,6 +137,7 @@ export default async function ReportsPage({
           input={data.input}
           selectedSpaceIds={selectedSpaceIds}
           viewData={stripReportData(data)}
+          backlogSpaces={backlogData?.spaces ?? []}
           fetchError={fetchError?.message ?? null}
           taskLimitReached={taskLimitReached}
         />

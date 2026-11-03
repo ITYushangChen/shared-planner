@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { railDividerClass, railShellClass } from "./rail-class";
 
 /** 侧栏占位：壳子先出，空间列表流式补上 */
 export function SidebarSkeleton() {
@@ -12,11 +13,17 @@ export function SidebarSkeleton() {
 
   return (
     <>
-      <aside className="hidden h-dvh w-28 shrink-0 flex-col items-center gap-1 bg-[var(--brand-rail)]/80 py-3 md:flex">
-        <div className="mb-1 h-10 w-10 animate-pulse rounded-full bg-white/30" />
-        <div className="h-12 w-16 animate-pulse rounded-xl bg-white/25" />
-        <div className="h-12 w-16 animate-pulse rounded-xl bg-white/25" />
-        <div className="h-12 w-16 animate-pulse rounded-xl bg-white/25" />
+      <aside className={railShellClass}>
+        <div className="mb-1 h-8 w-8 animate-pulse rounded-full bg-[var(--rail-divider)]" />
+        <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+        <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+        <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+        <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+        <div className="mt-auto flex flex-col items-center gap-1.5">
+          <div className={railDividerClass} />
+          <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+          <div className="h-11 w-14 animate-pulse rounded-xl bg-[var(--rail-divider)]/70" />
+        </div>
       </aside>
       {onMessagesPage ? null : (
         <aside className="hidden h-dvh w-64 shrink-0 flex-col border-r border-[var(--border-muted)] bg-[var(--surface-muted)]/80 md:flex">

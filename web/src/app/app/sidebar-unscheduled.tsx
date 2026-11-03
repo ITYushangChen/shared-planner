@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthUser } from "@/lib/auth-user";
 import {
   filterTodosForViewer,
   getCachedSpaceTodos,
@@ -115,9 +116,8 @@ export function SidebarUnscheduled({ spaces }: Props) {
   );
 
   useEffect(() => {
-    const supabase = createClient();
-    void supabase.auth.getUser().then(({ data }: { data: any }) => {
-      setCurrentUserId(data.user?.id ?? null);
+    void getAuthUser().then((user) => {
+      setCurrentUserId(user?.id ?? null);
     });
   }, []);
 
@@ -268,7 +268,12 @@ export function SidebarUnscheduled({ spaces }: Props) {
     : Object.values(canAssignBySpace).some(Boolean);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t border-[var(--border-muted)]/80">
+    <div
+      className={[
+        "flex min-h-0 flex-col border-t border-[var(--border-muted)]/80",
+        todos.length > 0 ? "flex-1" : "shrink-0",
+      ].join(" ")}
+    >
       <UnscheduledList
         todos={todos}
         members={

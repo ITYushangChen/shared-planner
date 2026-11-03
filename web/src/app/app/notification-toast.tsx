@@ -5,16 +5,24 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { newId } from "@/lib/id";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthUser } from "@/lib/auth-user";
 import {
   NOTIFICATION_TOAST,
   type NotificationToastDetail,
 } from "@/lib/notify-events";
 import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
+import {
+  DEFAULT_NOTIFICATION_PREFS,
+  isNotificationTypeEnabled,
+  loadNotificationPrefs,
+  type NotificationPrefs,
+} from "@/lib/notification-prefs";
 
 type ToastItem = {
   id: string;
   title: string;
   body: string | null;
+  type?: string;
 };
 
 /** 新通知到达时顶部弹出（本机事件 + Realtime） */
@@ -30,9 +38,25 @@ export function NotificationToast() {
   );
   const lastKeyRef = useRef<string>("");
   const lastAtRef = useRef(0);
+  const prefsRef = useRef<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
+
+  // 偏好只加载一次：弹窗总开关关掉、或该类型被关闭时不再弹出
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const user = await getAuthUser();
+      if (!user || cancelled) return;
+      prefsRef.current = await loadNotificationPrefs(supabase, user.id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   function showToast(item: ToastItem) {
     if (pathnameRef.current.startsWith("/app/notifications")) return;
+    if (!prefsRef.current.toast) return;
+    if (!isNotificationTypeEnabled(prefsRef.current, item.type)) return;
     const key = `${item.title}|${item.body ?? ""}`;
     const now = Date.now();
     // 本机事件与 Realtime 可能连发，2 秒内去重
@@ -54,6 +78,7 @@ export function NotificationToast() {
         id: detail.id ?? `local-${Date.now()}`,
         title: detail.title,
         body: detail.body ?? null,
+        type: detail.type,
       });
     }
     window.addEventListener(NOTIFICATION_TOAST, onLocal);
@@ -69,9 +94,7 @@ export function NotificationToast() {
 
     async function setup() {
       if (document.visibilityState === "hidden") return;
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const user = await getAuthUser();
       if (!user || cancelled) return;
       userId = user.id;
 
@@ -92,11 +115,13 @@ export function NotificationToast() {
               id: string;
               title: string;
               body: string | null;
+              type?: string;
             };
             showToast({
               id: row.id,
               title: row.title,
               body: row.body,
+              type: row.type,
             });
           },
         );

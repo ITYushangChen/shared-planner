@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Modal } from "./ui-modal";
+import { railItemClass } from "./rail-class";
 import {
   BG_POSITION_OPTIONS,
   BG_SIZE_OPTIONS,
@@ -227,21 +228,10 @@ export function AppearanceSettingsModal({
     router.refresh();
   }
 
-  const overlay =
-    open && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setOpen(false);
-            }}
-          >
-            <form
-              onSubmit={onSave}
-              className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-            <div className="mb-3 flex items-center justify-between">
+  const overlay = (
+    <Modal open={open} onClose={() => setOpen(false)} title="外观设置">
+      <form onSubmit={onSave} className="max-h-[90vh] overflow-y-auto">
+        <div className="mb-3 flex items-center justify-between">
               <h2 className="text-base font-semibold text-[var(--brand-ink)]">
                 外观设置
               </h2>
@@ -477,23 +467,22 @@ export function AppearanceSettingsModal({
             {msg ? (
               <p className="mt-2 text-xs text-[var(--text-muted)]">{msg}</p>
             ) : null}
-            </form>
-          </div>,
-          document.body,
-        )
-      : null;
+      </form>
+    </Modal>
+  );
 
   return (
     <>
       <button
         type="button"
-        title="外观设置"
+        title={rail ? undefined : "外观设置"}
         aria-label="外观设置"
+        data-tip={rail ? "外观设置" : undefined}
         onClick={() => setOpen(true)}
         className={
           className ??
           (rail
-            ? "mb-1 flex h-10 w-10 items-center justify-center rounded-lg text-white transition-colors duration-200 hover:bg-white/15"
+            ? railItemClass(false)
             : "w-full rounded-xl border border-[#2f5f8f]/55 bg-white/90 px-3 py-2 text-left text-sm font-medium text-[#2f5f8f] transition-all duration-200 hover:bg-[#e8f0f7]")
         }
       >

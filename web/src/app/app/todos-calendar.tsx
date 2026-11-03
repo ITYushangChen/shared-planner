@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -53,6 +52,7 @@ import {
 } from "@/lib/todos";
 import { hexToRgba, resolveTaskOpacity } from "@/lib/ui-prefs";
 import { chipClass } from "./ui-btn-class";
+import { Modal } from "./ui-modal";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
 import { DEFAULT_DEPARTMENT } from "@/lib/departments";
 
@@ -355,6 +355,44 @@ export function TodosCalendar({
       return ev;
     });
   }, [todos, conflictIds, uiPrefs, focusPulseId]);
+
+  /**
+   * 时间轴范围：默认 07:00–22:00，按当前事件向两端自动扩展。
+   *
+   * 此前写死 slotMinTime=07:00 / slotMaxTime=22:00，导致早于 7 点或晚于 22 点的
+   * 任务在日历上完全不渲染 —— 待办列表里看得到、日历上没有，用户以为数据丢了。
+   */
+  const slotRange = useMemo(() => {
+    const DEFAULT_MIN = 7 * 60;
+    const DEFAULT_MAX = 22 * 60;
+    let minMin = DEFAULT_MIN;
+    let maxMin = DEFAULT_MAX;
+
+    for (const ev of events) {
+      if (ev.allDay) continue;
+      const startRaw = ev.start as string | number | Date | undefined;
+      if (startRaw === undefined || startRaw === null) continue;
+      const s = new Date(startRaw);
+      if (Number.isNaN(s.getTime())) continue;
+      const endRaw = ev.end as string | number | Date | undefined;
+      const parsedEnd =
+        endRaw !== undefined && endRaw !== null ? new Date(endRaw) : null;
+      const e =
+        parsedEnd && !Number.isNaN(parsedEnd.getTime())
+          ? parsedEnd
+          : new Date(s.getTime() + 60 * 60 * 1000);
+      const sMin = s.getHours() * 60 + s.getMinutes();
+      const eMin = e.getHours() * 60 + e.getMinutes();
+      minMin = Math.min(minMin, Math.floor(sMin / 60) * 60);
+      maxMin = Math.max(maxMin, Math.ceil(eMin / 60) * 60);
+    }
+
+    const min = Math.max(0, Math.min(minMin, 23 * 60));
+    const max = Math.min(24 * 60, Math.max(maxMin, min + 60));
+    const toHms = (mins: number) =>
+      `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}:00`;
+    return { min: toHms(min), max: toHms(max) };
+  }, [events]);
 
   async function persistRange(
     todoId: string,
@@ -908,8 +946,8 @@ export function TodosCalendar({
             week: "周",
             day: "日",
           }}
-          slotMinTime="07:00:00"
-          slotMaxTime="22:00:00"
+          slotMinTime={slotRange.min}
+          slotMaxTime={slotRange.max}
           allDayText="全天"
           allDaySlot
           dayMaxEvents={false}
@@ -958,28 +996,25 @@ export function TodosCalendar({
         />
       ) : null}
 
-      {createPrefill && spaces.length > 0 && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setCreatePrefill(null);
-              }}
-            >
-              <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-zinc-900">
-                    新建待办
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => setCreatePrefill(null)}
-                    className="text-sm text-zinc-500 hover:text-zinc-800"
-                  >
-                    关闭
-                  </button>
-                </div>
-                <QuickCreateTodo
+      {createPrefill && spaces.length > 0 ? (
+        <Modal
+          open
+          onClose={() => setCreatePrefill(null)}
+          title="新建待办"
+          variant="bottom"
+        >
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-zinc-900">新建待办</h2>
+              <button
+                type="button"
+                onClick={() => setCreatePrefill(null)}
+                className="text-sm text-zinc-500 hover:text-zinc-800"
+              >
+                关闭
+              </button>
+            </div>
+            <QuickCreateTodo
                   key={`${createPrefill.startLocal}-${createPrefill.startDate}-${createPrefill.isAllDay}`}
                   spaces={spaces}
                   defaultSpaceId={defaultSpaceId}
@@ -996,22 +1031,24 @@ export function TodosCalendar({
                     setCreatePrefill(null);
                   }}
                 />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+          </div>
+        </Modal>
+      ) : null}
 
       <style jsx global>{`
         .sharetodo-calendar .fc {
-          --fc-border-color: #e4e4e7;
-          --fc-button-bg-color: #18181b;
-          --fc-button-border-color: #18181b;
-          --fc-button-hover-bg-color: #27272a;
-          --fc-button-hover-border-color: #27272a;
-          --fc-button-active-bg-color: #09090b;
-          --fc-button-active-border-color: #09090b;
-          --fc-today-bg-color: #d4d4d8;
+          --fc-border-color: #e5e7eb;
+          --fc-page-bg-color: #ffffff;
+          --fc-neutral-bg-color: #f6f8fa;
+          --fc-today-bg-color: #e6f1fb;
+          --fc-now-indicator-color: #185fa5;
+          --fc-button-bg-color: #ffffff;
+          --fc-button-border-color: #e2e6ea;
+          --fc-button-text-color: #3a3f42;
+          --fc-button-hover-bg-color: #eef2f6;
+          --fc-button-hover-border-color: #d5dbe1;
+          --fc-button-active-bg-color: #e6f1fb;
+          --fc-button-active-border-color: #185fa5;
         }
         .sharetodo-calendar .fc-day-today {
           background-color: var(--fc-today-bg-color) !important;
@@ -1019,10 +1056,75 @@ export function TodosCalendar({
         .sharetodo-calendar .fc-toolbar-title {
           font-size: 1rem;
           font-weight: 600;
+          color: var(--brand-ink);
         }
         .sharetodo-calendar .fc-button {
           font-size: 0.75rem;
-          padding: 0.25rem 0.5rem;
+          font-weight: 500;
+          padding: 0.3rem 0.6rem;
+          border-radius: 0.5rem;
+          text-transform: none;
+          box-shadow: none;
+          transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .sharetodo-calendar .fc-button-primary {
+          color: var(--brand-ink);
+        }
+        .sharetodo-calendar .fc-button-primary:not(:disabled):hover {
+          color: #1f2a33;
+        }
+        .sharetodo-calendar .fc-button-primary:disabled {
+          opacity: 0.45;
+        }
+        .sharetodo-calendar .fc-button-primary:not(:disabled).fc-button-active,
+        .sharetodo-calendar .fc-button-primary:not(:disabled):active {
+          color: var(--brand);
+        }
+        .sharetodo-calendar .fc-button:focus-visible {
+          box-shadow: 0 0 0 3px rgba(24, 95, 165, 0.18);
+        }
+        /* prev/next 合并成一组：只保留外侧圆角，中间不留双边框 */
+        .sharetodo-calendar .fc .fc-button-group > .fc-button:first-child {
+          border-top-left-radius: 0.5rem;
+          border-bottom-left-radius: 0.5rem;
+          border-top-right-radius: 0;
+          border-bottom-right-radius: 0;
+        }
+        .sharetodo-calendar .fc .fc-button-group > .fc-button:last-child {
+          border-top-right-radius: 0.5rem;
+          border-bottom-right-radius: 0.5rem;
+          border-top-left-radius: 0;
+          border-bottom-left-radius: 0;
+          margin-left: -1px;
+        }
+        /* 今天：浅蓝底 + 品牌蓝字，作为明确的「回到今天」动作 */
+        .sharetodo-calendar .fc .fc-today-button {
+          background: #e6f1fb;
+          border-color: #185fa5;
+          color: #185fa5;
+          font-weight: 600;
+        }
+        .sharetodo-calendar .fc .fc-today-button:not(:disabled):hover {
+          background: #d7e8f8;
+          border-color: #185fa5;
+          color: #185fa5;
+        }
+        .sharetodo-calendar .fc .fc-today-button:disabled {
+          opacity: 0.5;
+        }
+        .sharetodo-calendar .fc-col-header-cell {
+          background: #f6f8fa;
+        }
+        .sharetodo-calendar .fc-col-header-cell-cushion {
+          color: #6b7280;
+          font-size: 0.78rem;
+          font-weight: 500;
+          padding: 0.25rem 0;
+        }
+        .sharetodo-calendar
+          .fc-col-header-cell.fc-day-today
+          .fc-col-header-cell-cushion {
+          color: var(--brand);
         }
         .sharetodo-calendar .fc-event-conflict,
         .sharetodo-calendar .fc-event-conflict .fc-event-main,
@@ -1099,7 +1201,7 @@ export function TodosCalendar({
                 env(safe-area-inset-bottom, 0px)
             ) !important;
             --fc-border-color: rgba(113, 113, 122, 0.22);
-            --fc-today-bg-color: rgba(63, 63, 70, 0.22);
+            --fc-today-bg-color: rgba(24, 95, 165, 0.1);
             --fc-page-bg-color: transparent;
             --fc-neutral-bg-color: rgba(255, 255, 255, 0.2);
           }
@@ -1150,21 +1252,29 @@ export function TodosCalendar({
           }
           .sharetodo-cal-mobile .fc-prev-button,
           .sharetodo-cal-mobile .fc-next-button {
-            background: #18181b !important;
-            border-color: #18181b !important;
-            color: #fff !important;
+            background: #ffffff !important;
+            border: 1px solid #e2e6ea !important;
+            color: #3a3f42 !important;
             border-radius: 0.5rem;
             min-width: 2.25rem;
             min-height: 2.25rem;
           }
+          .sharetodo-cal-mobile .fc-prev-button:active,
+          .sharetodo-cal-mobile .fc-next-button:active {
+            background: #eef2f6 !important;
+          }
           .sharetodo-cal-mobile .fc-today-button {
-            background: #71717a !important;
-            border-color: #71717a !important;
-            color: #fff !important;
+            background: #e6f1fb !important;
+            border: 1px solid #185fa5 !important;
+            color: #185fa5 !important;
             border-radius: 0.5rem;
             width: auto;
             max-width: none;
             padding: 0.35rem 0.85rem !important;
+            font-weight: 600 !important;
+          }
+          .sharetodo-cal-mobile .fc-today-button:disabled {
+            opacity: 0.5;
           }
           .sharetodo-cal-mobile .fc-button-group {
             border-radius: 0.5rem;

@@ -11,6 +11,16 @@
   --brand-ink: #3a3f42;
   --brand-rail: #E6F1FB;
 
+  /* 最左图标栏（rail）专用令牌
+     改底色只动 --rail-bg / --rail-divider，前景色自动跟随，不会再出现白字压浅底 */
+  --rail-bg: #e6f1fb;
+  --rail-fg: #4a5462;
+  --rail-fg-strong: #185fa5;
+  --rail-divider: #c8dcef;
+  --rail-hover-bg: #ffffff;
+  --rail-active-bg: #ffffff;
+  --rail-active-fg: #185fa5;
+
   --pri-high: #e5a54b;
   --pri-medium: #b7bbbd;
   --pri-low: #5cb88a;
@@ -25,8 +35,11 @@
   --surface: #ffffff;
   --surface-muted: #f5f6f8;
   --border-muted: #e3e8ef;
-  --text-muted: #9aa3ad;
-  --text-secondary: #6b7380;
+  /* ⚠️ 原 --text-muted: #9aa3ad 在白底上对比度仅约 2.4:1（WCAG AA 要求 4.5:1），
+     而它被大量用在提示文字、副标题、统计说明上，弱视用户基本读不清。
+     压深到 #6b7280（约 4.8:1）；需要更浅时只用于非文本元素。 */
+  --text-muted: #6b7280;
+  --text-secondary: #5b6470;
 
   --radius-ui: 0.75rem;
   --radius-card: 1rem;
@@ -66,4 +79,115 @@ body {
 
 .bg-hero-gradient {
   background: linear-gradient(135deg, var(--hero-from), var(--hero-to));
+}
+
+/* ── 图标栏（rail）统一规格 ─────────────────────────────
+   1) 所有 rail 按钮里的图标一律 20×20、线宽 1.7。
+      历史上各图标写死了 18px 与 1.4/1.6/1.8/1.9，看过去粗细不一，这里统一兜住。
+   2) 提示气泡用 data-tip 属性驱动，350ms 延迟后才出现，避免鼠标划过时乱闪。 */
+.rail-item {
+  position: relative;
+}
+
+.rail-item > svg,
+.rail-item > span > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.rail-item svg path,
+.rail-item svg rect,
+.rail-item svg circle,
+.rail-item svg line,
+.rail-item svg polyline {
+  stroke-width: 1.7;
+}
+
+.rail-item[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  z-index: 60;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--brand-ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.rail-item[data-tip]:hover::after,
+.rail-item[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+  transition-delay: 0.35s;
+}
+
+/* 视图过渡：切换空间时旧页 / 新页交叉淡入淡出，消除「冻一下再整段跳」的硬替换感。
+   不支持 View Transitions 的浏览器（如部分 Firefox）自动跳过，走普通跳转。 */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.3s;
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+}
+
+/* 切换空间时的顶部细进度条（数据未到但保留旧内容，避免整块白屏） */
+@keyframes sp-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(410%);
+  }
+}
+
+.sp-progress-bar {
+  animation: sp-progress 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-progress-bar {
+    animation: none;
+    width: 100%;
+  }
+}
+
+
+/* ── 统一的键盘焦点环 ─────────────────────────────────────────────
+   此前十余处组件写了 outline-none，焦点态只靠 1px 边框变色（#e3e8ef → #2f5f8f），
+   键盘用户几乎察觉不到焦点在哪。这里全局补一个明确的 focus-visible 环，
+   只在键盘导航时出现（鼠标点击不显示），不影响视觉设计。 */
+:where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [role="switch"],
+  [role="tab"],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid #2f5f8f;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* 触屏设备没有 hover：此前「··· / +」这类按钮默认 opacity-0、仅 group-hover 显形，
+   在平板和带触屏的笔记本上永久不可见。这里让它们在无 hover 能力的设备上常显。 */
+@media (hover: none) {
+  .group:hover .hover-only-action,
+  .hover-only-action {
+    opacity: 1 !important;
+  }
 }

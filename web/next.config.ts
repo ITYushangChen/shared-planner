@@ -20,6 +20,44 @@ const nextConfig: NextConfig = {
   // 注意只匹配 /_next/static 与 /_next/image，绝不覆盖页面 HTML（带 auth 的页面不缓存）。
   async headers() {
     return [
+      // ⚠️ 安全响应头（2026-11-02 补）：此前一个都没有，缺 CSP / 点击劫持 / MIME 嗅探防护。
+      // 说明：本站需要连 Supabase（同源 /supabase 反代）与加载用户自定义头像 URL，
+      // 所以 CSP 的 img-src 放行 https: 与 data:，connect-src 用 'self' 即可走同源反代。
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              // 内联样式：Tailwind 与 FullCalendar 运行时注入 <style>，必须放行
+              "style-src 'self' 'unsafe-inline'",
+              // Next 需要内联启动脚本；AI/图表等未引入外部脚本，不放 unsafe-eval
+              "script-src 'self' 'unsafe-inline'",
+              // 头像可以是任意 https 地址，也允许 data: 预览
+              "img-src 'self' data: https: blob:",
+              // 同源 /supabase 反代 + 后端 API
+              "connect-src 'self' https:",
+              "font-src 'self' data:",
+              "frame-ancestors 'self'",
+              "base-uri 'self'",
+              "form-action 'self'",
+              "object-src 'none'",
+            ].join("; "),
+          },
+        ],
+      },
       {
         source: "/_next/static/:path*",
         headers: [

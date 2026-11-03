@@ -1,8 +1,9 @@
 "use client";
 
-import { startTransition, useEffect } from "react";
+import { startTransition, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthUser } from "@/lib/auth-user";
 import { REALTIME_ENABLED } from "@/lib/realtime-enabled";
 
 /**
@@ -23,6 +24,13 @@ export function useSpaceNavRealtime() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  // 用 ref 保存最新路径，避免把 pathname 放进订阅依赖导致每次导航都
+  // 断链重连 Realtime + 再验一次登录（这是切页面时的一笔隐藏开销）
+  const pathnameRef = useRef(pathname);
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     if (!REALTIME_ENABLED) return;
@@ -32,9 +40,7 @@ export function useSpaceNavRealtime() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function setup() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const user = await getAuthUser();
       if (!user || cancelled) return;
 
       const ch = supabase
@@ -60,7 +66,7 @@ export function useSpaceNavRealtime() {
                 if (
                   p.eventType === "DELETE" &&
                   spaceId &&
-                  pathname.startsWith(`/app/spaces/${spaceId}`)
+                  pathnameRef.current.startsWith(`/app/spaces/${spaceId}`)
                 ) {
                   // 正在查看被移出/被删除的空间：先跳回总览
                   router.replace("/app?view=calendar&range=week");
@@ -89,5 +95,5 @@ export function useSpaceNavRealtime() {
       if (debounceTimer) clearTimeout(debounceTimer);
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [router, supabase, pathname]);
+  }, [router, supabase]);
 }

@@ -1,13 +1,15 @@
 "use client";
 
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   prefetchSpaceCalendarTodos,
   prefetchSpaceMembers,
 } from "@/lib/space-data-cache";
+import { prefetchSpaceBootstrap } from "@/lib/space-bootstrap";
 import { createClient } from "@/lib/supabase/client";
+import { useViewTransition } from "@/lib/use-view-transition";
 import { spaceKindLabel } from "@/lib/spaces";
 import type { SpaceNavItem } from "@/lib/todos";
 
@@ -40,6 +42,7 @@ export function SpaceNavRow({
 }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+  const transitionTo = useViewTransition();
   const supabase = createClient();
   const href = `/app/spaces/${space.id}`;
   const routeActive = pathname === href || pathname.startsWith(`${href}/`);
@@ -60,8 +63,22 @@ export function SpaceNavRow({
 
   function prefetchSpace() {
     router.prefetch(href);
+    // 空间首屏数据（空间/角色/成员/邀请）——hover 即预热，点下去基本秒开
+    prefetchSpaceBootstrap(space.id);
     prefetchSpaceCalendarTodos(space.id);
     prefetchSpaceMembers(space.id);
+  }
+
+  // 普通左键点击走视图过渡跳转；带修饰键/中键则放行，交回浏览器原生的新标签打开。
+  function handleNavClick(e: ReactMouseEvent<HTMLAnchorElement>) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    setPendingActive(true);
+    prefetchSpace();
+    onNavigate?.();
+    transitionTo(href);
   }
 
   useEffect(() => {
@@ -106,7 +123,12 @@ export function SpaceNavRow({
 
   const iconBtn = stacked
     ? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]"
-    : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base text-[var(--text-muted)] opacity-70 transition-colors hover:bg-white hover:text-[var(--brand-ink)] hover:opacity-100";
+    : [
+        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base transition-[opacity,color,background-color] duration-150 hover:bg-white hover:text-[var(--brand-ink)]",
+        active
+          ? "text-[var(--text-muted)] opacity-100"
+          : "pointer-events-none text-[var(--text-muted)] opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+      ].join(" ");
 
   const menu = menuOpen ? (
     <div
@@ -197,16 +219,16 @@ export function SpaceNavRow({
     <div
       ref={rootRef}
       className={[
-        "relative rounded-r-lg border-l-[3px] py-1.5 pl-2 pr-1 text-[15px] transition-colors duration-200",
+        "group relative rounded-r-lg border-l-[3px] py-1.5 pl-2 pr-1 text-[14px] transition-colors duration-200",
         active
           ? "border-brand bg-brand-soft font-medium text-brand"
-          : "border-transparent text-[var(--brand-ink)] hover:bg-white",
+          : "border-transparent text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]",
       ].join(" ")}
     >
       <div className="flex min-w-0 items-center gap-0.5">
         <Link
           href={href}
-          prefetch
+          prefetch={false}
           className={[
             "min-w-0 flex-1 truncate py-1",
             stacked ? "font-medium" : "",
@@ -214,11 +236,8 @@ export function SpaceNavRow({
           title={space.name}
           onMouseEnter={prefetchSpace}
           onFocus={prefetchSpace}
-          onClick={() => {
-            setPendingActive(true);
-            prefetchSpace();
-            onNavigate?.();
-          }}
+          onPointerDown={prefetchSpace}
+          onClick={handleNavClick}
         >
           {space.name}
         </Link>
@@ -228,15 +247,12 @@ export function SpaceNavRow({
       {showSubtitle ? (
         <Link
           href={href}
-          prefetch
+          prefetch={false}
           className="mt-0.5 block truncate text-xs text-[var(--text-muted)]"
           onMouseEnter={prefetchSpace}
           onFocus={prefetchSpace}
-          onClick={() => {
-            setPendingActive(true);
-            prefetchSpace();
-            onNavigate?.();
-          }}
+          onPointerDown={prefetchSpace}
+          onClick={handleNavClick}
         >
           {subtitle ?? spaceKindLabel(space.kind)}
         </Link>

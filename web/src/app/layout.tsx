@@ -8,11 +8,13 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "ShareTodo AI",
-  description: "AI 驱动的共享日程待办助手",
+  // 品牌名统一为 SharedPlanner（此前 title 是遗留的 ShareTodo AI，
+  // 与仓库名、页面内文案都不一致）
+  title: "SharedPlanner · 共享日程与待办协作",
+  description: "共享日程与待办协作，支持空间协作、日历排期与进度报告",
   appleWebApp: {
     capable: true,
-    title: "ShareTodo",
+    title: "SharedPlanner",
     statusBarStyle: "default",
   },
   formatDetection: {
@@ -23,7 +25,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // 不再禁用缩放：maximumScale:1 违反 WCAG 1.4.4，弱视用户无法放大页面
   viewportFit: "cover",
   themeColor: "#b7bbbd",
 };

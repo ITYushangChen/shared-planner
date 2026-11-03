@@ -1,10 +1,16 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useState } from "react";
+import {
+  startTransition,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
-import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
+import { Modal } from "./ui-modal";
 import dynamic from "next/dynamic";
 const CreateSpaceModal = dynamic(
   () =>
@@ -19,6 +25,11 @@ const JoinSpaceModal = dynamic(
 import { NotificationBell } from "./notification-bell";
 import { SpaceKindNav } from "./space-kind-nav";
 import { SpaceNavRow } from "./space-nav-row";
+import {
+  railDividerClass,
+  railItemClass,
+  railShellClass,
+} from "./rail-class";
 import { createClient } from "@/lib/supabase/client";
 import { prefetchAppRoutes } from "@/lib/soft-nav";
 import { useSpaceNavRealtime } from "@/lib/use-space-nav-realtime";
@@ -35,13 +46,6 @@ const QuickCreateTodo = dynamic(
 const SpacePanelModal = dynamic(
   () =>
     import("./space-panel-modal").then((m) => ({ default: m.SpacePanelModal })),
-  { ssr: false },
-);
-const AppearanceSettingsModal = dynamic(
-  () =>
-    import("./appearance-settings-modal").then((m) => ({
-      default: m.AppearanceSettingsModal,
-    })),
   { ssr: false },
 );
 const SidebarUnscheduled = dynamic(
@@ -65,8 +69,6 @@ export function AppSidebar({
   spaces,
   displayName,
   avatarUrl,
-  globalUiPrefs,
-  spacePrefsById,
   timezone,
 }: Props) {
   const pathname = usePathname();
@@ -86,8 +88,6 @@ export function AppSidebar({
   const [panelMode, setPanelMode] = useState<"invites" | "members" | null>(
     null,
   );
-  /** 外观设置体积大，空闲后再挂载 */
-  const [appearanceReady, setAppearanceReady] = useState(false);
   const [privOpen, setPrivOpen] = useState(true);
   const [pubsOpen, setPubsOpen] = useState(true);
   /** 桌面二级空间栏收起（保留最左图标栏） */
@@ -239,15 +239,6 @@ export function AppSidebar({
   }, [pathname]);
 
   useEffect(() => {
-    if (drawerOpen) setAppearanceReady(true);
-  }, [drawerOpen]);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setAppearanceReady(true), 2500);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
     if (!focusSpaceId && spaces[0]) setFocusSpaceId(spaces[0].id);
   }, [spaces, focusSpaceId]);
 
@@ -327,172 +318,88 @@ export function AppSidebar({
 
   return (
     <>
-      {/* 最左图标栏（半透明，透出整页背景图） */}
-      <aside className="hidden h-dvh w-28 shrink-0 sticky top-0 flex-col items-center gap-1 bg-[var(--brand-rail)]/80 py-3 backdrop-blur-md md:flex">
+      {/* 最左图标栏：只负责「去哪个页面」，视图切换已移到内容区顶部 */}
+      <aside className={railShellClass}>
         <Link
           href="/app/settings"
-          title="设置"
+          aria-label="设置"
+          data-tip="设置"
           prefetch
-          className={railIconClass(onProfile)}
+          className={railItemClass(onProfile)}
         >
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={avatarUrl}
               alt=""
-              className="h-10 w-10 rounded-full border-2 border-white/40 object-cover"
+              className="h-8 w-8 rounded-full object-cover ring-2 ring-white"
             />
           ) : (
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-sm font-semibold text-white">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--rail-fg-strong)] text-xs font-semibold text-white ring-2 ring-white">
               {name.slice(0, 1).toUpperCase()}
             </span>
           )}
         </Link>
         <Link
           href="/app?view=calendar&range=week"
-          title="总览工作区"
+          aria-label="总览工作区"
+          data-tip="总览"
           prefetch
-          className={railIconClass(onOverview)}
+          className={railItemClass(onOverview)}
         >
           <RailIconOverview />
         </Link>
         <Link
           href="/app/notifications"
-          title="消息"
+          aria-label="消息"
+          data-tip="消息"
           prefetch
-          className={railIconClass(onNotify)}
+          className={railItemClass(onNotify)}
         >
           <NotificationBell iconOnly rail subscribe />
         </Link>
 
-        <div
-          className="mt-2 flex flex-col items-center gap-0.5 border-t border-white/15 pt-2"
-          role="group"
-          aria-label="日周月"
+        <Link
+          href="/app/reports"
+          aria-label="报告中心"
+          data-tip="报告"
+          prefetch
+          className={railItemClass(onReports)}
         >
-          {(
-            [
-              ["day", "日"],
-              ["week", "周"],
-              ["month", "月"],
-            ] as const
-          ).map(([key, label]) => {
-            const active =
-              (onOverviewPage || Boolean(spaceIdFromPath)) &&
-              overviewRange === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                title={label === "日" ? "日视图" : label === "周" ? "周视图" : "月视图"}
-                aria-label={label === "日" ? "日视图" : label === "周" ? "周视图" : "月视图"}
-                aria-pressed={active}
-                onClick={() => goOverviewRange(key)}
-                className={railIconClass(active)}
-              >
-                <span className="text-[13px] font-bold tracking-wide">
-                  {label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+          <RailIconReport />
+        </Link>
 
-        <div
-          className="mt-2 flex flex-col items-center gap-0.5 border-t border-white/15 pt-2"
-          role="group"
-          aria-label="视图"
-        >
-          {(
-            [
-              ["boards", "象", "四象限"],
-              ["calendar", "历", "日历"],
-              ["list", "待", "四象限待办"],
-            ] as const
-          ).map(([view, short, title]) => {
-            const current = spaceIdFromPath ? spaceView : overviewView;
-            const active =
-              (onOverviewPage || Boolean(spaceIdFromPath)) && current === view;
-            return (
-              <button
-                key={view}
-                type="button"
-                title={title}
-                aria-label={title}
-                aria-pressed={active}
-                onClick={() => goAppView(view)}
-                className={railIconClass(active)}
-              >
-                <span className="text-[13px] font-bold tracking-wide">
-                  {short}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div
-          className="mt-2 flex flex-col items-center gap-0.5 border-t border-white/15 pt-2"
-          role="group"
-          aria-label="报告"
-        >
-          <Link
-            href="/app/reports"
-            title="报告中心"
-            aria-label="报告中心"
-            prefetch
-            className={railIconClass(onReports)}
-          >
-            <span className="text-[13px] font-bold tracking-wide">报</span>
-          </Link>
-        </div>
-
-        <div className="mt-auto flex flex-col items-center gap-0.5">
-          {!onMessagesPage ? (
-            <button
-              type="button"
-              title={panelCollapsed ? "展开空间列表" : "收起空间列表"}
-              aria-label={panelCollapsed ? "展开空间列表" : "收起空间列表"}
-              aria-pressed={panelCollapsed}
-              onClick={togglePanelCollapsed}
-              className={railIconClass(false)}
-            >
-              <RailIconPanelToggle collapsed={panelCollapsed} />
-            </button>
-          ) : null}
+        <div className="mt-auto flex w-full flex-col items-center gap-1.5">
+          <div className={railDividerClass} />
+          {/* 动作组：AI → 新建 → 加入（按使用频率从上到下） */}
           <button
             type="button"
-            title="AI 助手"
             aria-label="AI 助手"
+            data-tip="AI 助手"
             disabled={spaces.length === 0}
             onClick={() => {
               const target = focusSpace ?? spaces[0];
               if (target) setAiSpace(target);
             }}
-            className={railIconClass(false) + " disabled:opacity-40"}
+            className={railItemClass(false) + " disabled:cursor-not-allowed disabled:opacity-40"}
           >
-            <span className="text-[13px] font-bold tracking-wide">AI</span>
+            <RailIconSpark />
           </button>
           <CreateSpaceModal rail />
           <JoinSpaceModal rail />
-          {appearanceReady ? (
-            <AppearanceSettingsModal
-              rail
-              spaces={spaces}
-              initialGlobalPrefs={globalUiPrefs}
-              initialSpacePrefsById={spacePrefsById}
-            />
-          ) : (
+          {/* 只在二级栏收起时出现：展开时「收起」按钮在栏自己头上，两处不同时常驻才不会重复 */}
+          {panelCollapsed ? (
             <button
               type="button"
-              title="外观设置"
-              aria-label="外观设置"
-              className={railIconClass(false)}
-              onClick={() => setAppearanceReady(true)}
+              aria-label="展开空间列表"
+              data-tip="展开空间列表"
+              aria-pressed={false}
+              onClick={togglePanelCollapsed}
+              className={railItemClass(false)}
             >
-              <RailIconGear />
+              <RailIconPanelToggle collapsed />
             </button>
-          )}
+          ) : null}
         </div>
       </aside>
 
@@ -506,57 +413,38 @@ export function AppSidebar({
         ].join(" ")}
         aria-hidden={panelHidden}
       >
-        <div className="shrink-0 border-b border-[var(--border-muted)]/80 px-3 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[17px] font-bold tracking-tight text-[var(--brand-ink)]">
-              空间
-            </p>
+        {/* 头部：只留搜索 + 收起；「空间」标题与下方分组重复，已删 */}
+        <div className="shrink-0 border-b border-[var(--border-muted)]/80 px-2 py-2">
+          <div className="flex items-center gap-1">
+            <div className="relative min-w-0 flex-1">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]">
+                <RailIconSearch />
+              </span>
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="搜索空间"
+                className="w-full rounded-lg border border-[var(--border-muted)] bg-white py-2 pl-8 pr-2 text-sm text-[var(--brand-ink)] outline-none focus:border-brand"
+              />
+            </div>
             <button
               type="button"
               title="收起空间列表"
               aria-label="收起空间列表"
               onClick={togglePanelCollapsed}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]"
             >
               <RailIconPanelToggle collapsed={false} />
             </button>
           </div>
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="搜索空间"
-            className="mt-2 w-full rounded-lg border border-[var(--border-muted)] bg-white px-2.5 py-2 text-sm outline-none focus:border-brand"
-          />
         </div>
 
-        <nav className="flex max-h-[52%] min-h-0 shrink-0 flex-col overflow-y-auto p-2">
-          <Link
-            href="/app?view=calendar&range=week"
-            prefetch
-            className={spaceNavClass(onOverview && !onSpaces)}
-          >
-            <span className="block truncate font-medium">总览工作区</span>
-            <span className="block text-xs text-[var(--text-muted)]">
-              全部空间日程
-            </span>
-          </Link>
-          <Link
-            href="/app/reports"
-            prefetch
-            className={spaceNavClass(onReports)}
-          >
-            <span className="block truncate font-medium">报告中心</span>
-            <span className="block text-xs text-[var(--text-muted)]">
-              日报 · 周报 · 月报
-            </span>
-          </Link>
+        <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
+          {/* 总览 / 报告 只保留最左图标栏一个入口：这里再放一遍会出现「同一页面两处高亮」 */}
 
           {searching ? (
-            <div className="mt-3 space-y-0.5">
-              <p className="px-2 text-xs font-semibold text-[var(--text-muted)]">
-                搜索结果
-              </p>
+            <div className="space-y-0.5">
               {searchHits.length === 0 ? (
                 <p className="px-2 py-2 text-sm text-[var(--text-muted)]">
                   无匹配空间
@@ -574,35 +462,24 @@ export function AppSidebar({
             </div>
           ) : (
             <>
-              <div className="mb-1 mt-4 flex w-full items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={togglePrivOpen}
-                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-[15px] font-bold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
-                  aria-expanded={privOpen}
-                >
-                  <span>我的空间</span>
-                </button>
-                <CreateSpaceModal
-                  defaultVisibility="private"
-                  hideDefaultTrigger
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-base font-medium text-[var(--brand-ink)] transition-colors hover:bg-[var(--surface-muted)]"
-                />
-                <button
-                  type="button"
-                  onClick={togglePrivOpen}
-                  className="shrink-0 rounded-lg px-1.5 py-1 text-[13px] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
-                  aria-expanded={privOpen}
-                >
-                  {privOpen ? "收起" : "展开"}
-                </button>
-              </div>
+              <SectionHeader
+                label="我的空间"
+                open={privOpen}
+                onToggle={togglePrivOpen}
+                addSlot={
+                  <CreateSpaceModal
+                    defaultVisibility="private"
+                    hideDefaultTrigger
+                    className={sectionAddBtnClass}
+                  />
+                }
+              />
               {privOpen ? (
-                <div className="ml-2 border-l border-[var(--border-muted)] pl-2">
+                <div className="space-y-0.5 pl-1">
                   <SpaceKindNav
                     spaces={priv}
                     storagePrefix="sharetodo-nav-priv-kind"
-                    emptyText="暂无私人空间"
+                    emptyText="还没有私人空间，点上方 + 新建"
                     flat
                     hideSubtitle
                     onQuickCreate={setQuickSpaceId}
@@ -610,35 +487,24 @@ export function AppSidebar({
                 </div>
               ) : null}
 
-              <div className="mb-1 mt-4 flex w-full items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={togglePubsOpen}
-                  className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-1 text-left text-[15px] font-bold tracking-wide text-[var(--brand-ink)] hover:bg-[var(--surface-muted)]"
-                  aria-expanded={pubsOpen}
-                >
-                  <span>公共空间</span>
-                </button>
-                <CreateSpaceModal
-                  defaultVisibility="public"
-                  hideDefaultTrigger
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-base font-medium text-[var(--brand-ink)] transition-colors hover:bg-[var(--surface-muted)]"
-                />
-                <button
-                  type="button"
-                  onClick={togglePubsOpen}
-                  className="shrink-0 rounded-lg px-1.5 py-1 text-[13px] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
-                  aria-expanded={pubsOpen}
-                >
-                  {pubsOpen ? "收起" : "展开"}
-                </button>
-              </div>
+              <SectionHeader
+                label="公共空间"
+                open={pubsOpen}
+                onToggle={togglePubsOpen}
+                addSlot={
+                  <CreateSpaceModal
+                    defaultVisibility="public"
+                    hideDefaultTrigger
+                    className={sectionAddBtnClass}
+                  />
+                }
+              />
               {pubsOpen ? (
-                <div className="ml-2 border-l border-[var(--border-muted)] pl-2">
+                <div className="space-y-0.5 pl-1">
                   <SpaceKindNav
                     spaces={pubs}
                     storagePrefix="sharetodo-nav-pubs-kind"
-                    emptyText="暂无公共空间"
+                    emptyText="还没有公共空间，点上方 + 新建"
                     flat
                     hideSubtitle
                     onQuickCreate={setQuickSpaceId}
@@ -648,7 +514,11 @@ export function AppSidebar({
             </>
           )}
         </nav>
-        {!panelHidden ? <SidebarUnscheduled spaces={spaces} /> : null}
+        {!panelHidden ? (
+          <div className="flex max-h-[42%] shrink-0 flex-col overflow-hidden">
+            <SidebarUnscheduled spaces={spaces} />
+          </div>
+        ) : null}
       </aside>
 
       {/* 移动端顶栏：菜单 + 消息铃铛 + 标题 */}
@@ -713,17 +583,14 @@ export function AppSidebar({
         </Link>
       </nav>
 
-      {drawerOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fixed inset-0 z-[70] md:hidden">
-              <button
-                type="button"
-                aria-label="关闭"
-                className="absolute inset-0 bg-black/40"
-                onClick={() => setDrawerOpen(false)}
-              />
-              <div className="absolute inset-y-0 left-0 flex w-[min(86vw,320px)] flex-col bg-white shadow-xl">
-                <div className="flex items-center justify-between border-b border-[var(--border-muted)] px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <Modal
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        title="菜单"
+        variant="left"
+        zClass="z-[70] md:hidden"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border-muted)] px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
                   <p className="text-base font-bold text-[var(--brand-ink)]">
                     菜单
                   </p>
@@ -1037,18 +904,19 @@ export function AppSidebar({
                     ) : null}
                   </div>
                 </div>
-              </div>
+      </Modal>
 
-            </div>,
-            document.body,
-          )
-        : null}
-
-      {quickSpaceId && quickSpace && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh]">
-              <div className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
-                <div className="mb-3 flex items-center justify-between gap-2">
+      {quickSpace ? (
+        <Modal
+          open={Boolean(quickSpaceId)}
+          onClose={() => setQuickSpaceId(null)}
+          title="快速创建"
+          zClass="z-[80]"
+          overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
+          className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
+        >
+          <div>
+          <div className="mb-3 flex items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
                     快速创建
                   </h2>
@@ -1069,11 +937,9 @@ export function AppSidebar({
                   bare
                   onCreated={() => setQuickSpaceId(null)}
                 />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+          </div>
+        </Modal>
+      ) : null}
 
       {panelMode ? (
         <SpacePanelModal
@@ -1084,59 +950,79 @@ export function AppSidebar({
         />
       ) : null}
 
-      {aiSpace && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[6vh]"
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setAiSpace(null);
-              }}
+      <Modal
+        open={Boolean(aiSpace)}
+        onClose={() => setAiSpace(null)}
+        title={aiSpace ? `AI 助手 · ${aiSpace.name}` : "AI 助手"}
+        zClass="z-[80]"
+        overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[6vh]"
+        className="w-full max-w-2xl rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
+      >
+        <div>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
+              AI 助手 · {aiSpace?.name}
+            </h2>
+            <button
+              type="button"
+              className="rounded px-2 py-1 text-sm text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+              onClick={() => setAiSpace(null)}
             >
-              <div className="w-full max-w-2xl rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
-                    AI 助手 · {aiSpace.name}
-                  </h2>
-                  <button
-                    type="button"
-                    className="rounded px-2 py-1 text-sm text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
-                    onClick={() => setAiSpace(null)}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <AiAssistant
-                  key={aiSpace.id}
-                  spaces={spaces}
-                  defaultSpaceId={aiSpace.id}
-                  timezone={timezone}
-                  plain
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+              关闭
+            </button>
+          </div>
+          {aiSpace ? (
+            <AiAssistant
+              key={aiSpace.id}
+              spaces={spaces}
+              defaultSpaceId={aiSpace.id}
+              timezone={timezone}
+              plain
+            />
+          ) : null}
+        </div>
+      </Modal>
     </>
   );
 }
 
-function railIconClass(active: boolean) {
-  return [
-    "mb-1 flex h-12 w-16 shrink-0 items-center justify-center rounded-xl text-white transition-colors duration-200",
-    active ? "bg-black/15" : "hover:bg-white/15",
-  ].join(" ");
+/** 分组标题：左侧三角承担折叠，替代原来常驻的「收起 / 展开」两个文字按钮 */
+function SectionHeader({
+  label,
+  open,
+  onToggle,
+  addSlot,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  addSlot?: ReactNode;
+}) {
+  return (
+    <div className="mt-4 flex w-full items-center gap-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left text-[11px] font-semibold tracking-[0.06em] text-[var(--text-muted)] transition-colors hover:text-[var(--brand-ink)]"
+      >
+        <span
+          className={[
+            "shrink-0 transition-transform duration-200",
+            open ? "rotate-0" : "-rotate-90",
+          ].join(" ")}
+        >
+          <RailIconChevron />
+        </span>
+        <span className="truncate">{label}</span>
+      </button>
+      {addSlot}
+    </div>
+  );
 }
 
-function spaceNavClass(active: boolean, nested = false) {
-  return [
-    "block py-2 text-[15px] transition-colors duration-200",
-    nested ? "rounded-r-lg pl-2.5 pr-2" : "rounded-lg px-2.5",
-    active
-      ? "border-l-[3px] border-brand bg-brand-soft font-medium text-brand"
-      : "border-l-[3px] border-transparent text-[var(--brand-ink)] hover:bg-white",
-  ].join(" ");
-}
+const sectionAddBtnClass =
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]";
 
 function mobileNavClass(active: boolean) {
   return [
@@ -1270,20 +1156,69 @@ function RailIconOverview() {
   );
 }
 
-function RailIconGear() {
+function RailIconReport() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
-        d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+        d="M5 20v-8M12 20V5M19 20v-5"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="1.9"
+        strokeLinecap="round"
       />
       <path
-        d="M19.4 13a7.6 7.6 0 0 0 .05-2l2.05-1.6-2-3.46-2.45 1a7.7 7.7 0 0 0-1.73-1L14.9 2h-4l-.42 2.94a7.7 7.7 0 0 0-1.73 1l-2.45-1-2 3.46L6.4 11a7.6 7.6 0 0 0 0 2l-2.05 1.6 2 3.46 2.45-1a7.7 7.7 0 0 0 1.73 1L10.9 22h4l.42-2.94a7.7 7.7 0 0 0 1.73-1l2.45 1 2-3.46L19.4 13Z"
+        d="M3 20h18"
         stroke="currentColor"
-        strokeWidth="1.4"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function RailIconChevron() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
   );
 }
+
+function RailIconSearch() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M16.5 16.5L21 21"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** AI 助手：星芒图标（与其他 rail 图标同为线性风格，尺寸/线宽由 globals.css 统一） */
+function RailIconSpark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M11 3.4 12.8 8.2 17.6 10 12.8 11.8 11 16.6 9.2 11.8 4.4 10 9.2 8.2z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M18 14.4 18.7 16.3 20.6 17 18.7 17.7 18 19.6 17.3 17.7 15.4 17 17.3 16.3z"
+        fill="currentColor"
+        opacity="0.75"
+      />
+    </svg>
+  );
+}
+

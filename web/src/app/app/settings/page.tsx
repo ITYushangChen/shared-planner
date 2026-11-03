@@ -20,7 +20,9 @@ export default async function SettingsPage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, timezone, email, avatar_url, ui_prefs")
+    .select(
+      "display_name, timezone, email, avatar_url, ui_prefs, notification_prefs",
+    )
     .eq("id", user.id)
     .maybeSingle();
 
@@ -36,6 +38,7 @@ export default async function SettingsPage({
         spaceCount={spaces.length}
         globalPrefsRaw={profile?.ui_prefs}
         spacePrefsByIdRaw={spacePrefsById}
+        notificationPrefsRaw={profile?.notification_prefs}
         spaces={spaces}
       />
     </Suspense>

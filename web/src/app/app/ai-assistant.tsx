@@ -16,6 +16,7 @@ import {
 } from "@/lib/ai-api";
 import type { SpaceNavItem } from "@/lib/todos";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
+import { mapAuthError } from "@/lib/error-map";
 
 type Mode = "create" | "schedule" | "conflict" | "reorder" | "summary";
 
@@ -247,7 +248,7 @@ export function AiAssistant({
         setMsg(`${res.date} 摘要已生成（今日 ${res.today_count} 项）`);
       }
     } catch (err) {
-      setMsg(err instanceof AiApiError ? err.message : "请求失败");
+      setMsg(err instanceof AiApiError ? mapAuthError(err.message) : "请求失败");
     } finally {
       setLoading(false);
     }
@@ -319,7 +320,7 @@ export function AiAssistant({
         router.refresh();
       }
     } catch (err) {
-      setMsg(err instanceof AiApiError ? err.message : "确认失败");
+      setMsg(err instanceof AiApiError ? mapAuthError(err.message) : "确认失败");
     } finally {
       setLoading(false);
     }
@@ -362,8 +363,14 @@ export function AiAssistant({
           {plain ? null : (
             <h2 className="text-sm font-medium text-zinc-800">AI 助手</h2>
           )}
+          {/* 此前是写死的「· 请先选择目标空间」，选了空间也照提示，纯误导 */}
           <p className={plain ? "text-xs text-zinc-400" : "mt-0.5 text-xs text-zinc-400"}>
-            先预览，确认后再写入（{tz}）· 请先选择目标空间
+            先预览，确认后再写入（{tz}）·{" "}
+            {spaceId && spaceId !== ALL_SPACES
+              ? `目标：${spaces.find((s) => s.id === spaceId)?.name ?? "当前空间"}`
+              : spaceId === ALL_SPACES
+                ? "目标：全部空间（跨空间）"
+                : "请先选择目标空间"}
           </p>
         </div>
         {!apiReady ? (

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { findConflictTodoIds } from "@/lib/conflicts";
 import {
   todoQuadrant,
@@ -18,6 +17,7 @@ import {
 } from "./notebook-quadrant";
 import { QuickCreateTodo } from "./quick-create-todo";
 import { TodoEditor } from "./todo-editor";
+import { Modal } from "./ui-modal";
 import { useImportanceDrop } from "./use-importance-drop";
 
 type Props = {
@@ -140,7 +140,7 @@ export function TodoListPanel({
         <p className="text-xs text-red-600">{drop.dropError}</p>
       ) : null}
 
-      <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {columns.map((col) => (
           <NotebookQuadrant
             key={col.key}
@@ -196,37 +196,39 @@ export function TodoListPanel({
         />
       ) : null}
 
-      {createFor && createSpaceId && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh]">
-              <div className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-4 shadow-xl">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-zinc-900">
-                    新建待办
-                  </h2>
-                  <button
-                    type="button"
-                    className="rounded px-2 py-1 text-sm text-zinc-500"
-                    onClick={() => setCreateFor(null)}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <QuickCreateTodo
-                  key={`${createSpaceId}-${createFor.priority}`}
-                  spaces={spaces}
-                  defaultSpaceId={createSpaceId}
-                  members={members}
-                  canAssign={canAssign}
-                  initialPriority={createFor.priority}
-                  bare
-                  onCreated={() => setCreateFor(null)}
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {createFor && createSpaceId ? (
+        <Modal
+          open
+          onClose={() => setCreateFor(null)}
+          title="新建待办"
+          zClass="z-[80]"
+          overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
+          className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-4 shadow-xl"
+        >
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-zinc-900">新建待办</h2>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-sm text-zinc-500"
+                onClick={() => setCreateFor(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <QuickCreateTodo
+              key={`${createSpaceId}-${createFor.priority}`}
+              spaces={spaces}
+              defaultSpaceId={createSpaceId}
+              members={members}
+              canAssign={canAssign}
+              initialPriority={createFor.priority}
+              bare
+              onCreated={() => setCreateFor(null)}
+            />
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

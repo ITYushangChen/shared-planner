@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SettingsFooter, SettingsRow, SettingsSection, fieldClass } from "./settings-ui";
 
+/** 允许的图片类型 → 存储扩展名（SVG 不在列，防存储型 XSS） */
+const ALLOWED_IMAGE_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
 const TIMEZONES = [
   "Asia/Shanghai",
   "Asia/Hong_Kong",
@@ -51,8 +60,12 @@ export function ProfilePanel({
 
   async function onPickFile(file: File | null) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setMsg("请选择图片文件");
+    // ⚠️ 安全：不能用 file.type.startsWith("image/") —— SVG 会通过，
+    // 若存储桶是 public，等于给自己埋了一个同源存储型 XSS。
+    // accept 属性只是提示，可被绕过，必须在这里白名单再卡一次。
+    const ext = ALLOWED_IMAGE_TYPES[file.type];
+    if (!ext) {
+      setMsg("仅支持 JPG / PNG / WebP / GIF 格式的图片");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -69,14 +82,6 @@ export function ProfilePanel({
       setMsg("请先登录");
       return;
     }
-    const ext =
-      file.type === "image/png"
-        ? "png"
-        : file.type === "image/webp"
-          ? "webp"
-          : file.type === "image/gif"
-            ? "gif"
-            : "jpg";
     const path = `${user.id}/avatar/${Date.now()}.${ext}`;
     const { error } = await supabase.storage
       .from("backgrounds")
@@ -191,7 +196,7 @@ export function ProfilePanel({
           <input className={fieldClass(true)} value={email} readOnly disabled />
         </SettingsRow>
 
-        <SettingsRow label="时区" hint="影响日历、日报与提醒的时间基准">
+        <SettingsRow label="时区" hint="用于 AI 智能排期；日历与提醒始终按你设备的本地时区显示">
           <select
             className={fieldClass()}
             value={timezone}

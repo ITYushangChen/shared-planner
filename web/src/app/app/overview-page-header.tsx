@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
+import { ViewSwitcher } from "./view-switcher";
 
 type Props = {
   members: SpaceMemberOption[];
@@ -108,7 +109,6 @@ export function OverviewPageHeader({
 
   const showPeople = members.length > 0;
   const showSpaces = spaces.length > 0;
-  if (!showPeople && !showSpaces) return null;
 
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-[var(--border-muted)] px-4 py-2 md:px-6 md:py-3">
@@ -142,6 +142,9 @@ export function OverviewPageHeader({
           />
         </label>
       ) : null}
+      <div className="ml-auto shrink-0">
+        <ViewSwitcher />
+      </div>
     </header>
   );
 }

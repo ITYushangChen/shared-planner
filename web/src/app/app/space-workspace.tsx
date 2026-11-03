@@ -42,10 +42,28 @@ const TodoListPanel = dynamic(
     import("./todo-list-panel").then((m) => ({ default: m.TodoListPanel })),
   { loading: () => null },
 );
+/** 日历 chunk / 数据未到位时的骨架占位，避免空白像"坏了" */
+function CalendarLoading() {
+  return (
+    <div
+      className="grid w-full grid-cols-7 gap-2 p-4"
+      aria-busy="true"
+      aria-label="加载日历中"
+    >
+      {Array.from({ length: 21 }).map((_, i) => (
+        <div
+          key={i}
+          className="h-28 animate-pulse rounded-lg bg-[var(--surface-muted)]"
+        />
+      ))}
+    </div>
+  );
+}
+
 const TodosCalendar = dynamic(
   () =>
     import("./todos-calendar").then((m) => ({ default: m.TodosCalendar })),
-  { ssr: false, loading: () => <div className="min-h-[420px]" aria-busy /> },
+  { ssr: false, loading: () => <CalendarLoading /> },
 );
 
 type Props = {

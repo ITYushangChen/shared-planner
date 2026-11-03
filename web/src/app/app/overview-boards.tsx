@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { createPortal } from "react-dom";
 import { findConflictTodoIds } from "@/lib/conflicts";
 import {
   QUADRANT_LABEL,
@@ -24,6 +23,7 @@ import {
   NotebookQuadrant,
 } from "./notebook-quadrant";
 import { chipClass } from "./ui-btn-class";
+import { Modal } from "./ui-modal";
 import { useImportanceDrop } from "./use-importance-drop";
 
 const QuickCreateTodo = dynamic(
@@ -270,7 +270,7 @@ export function OverviewBoards({
       {isQuadrant ? (
         <>
           {/* 手机：笔记本四象限（竖排） */}
-          <div className="flex flex-col gap-3 md:hidden">
+          <div className="flex flex-col gap-3 sm:hidden">
             {NOTEBOOK_QUADRANT_ORDER.map((key) => {
               const col = boardColumns.find((c) => c.key === key);
               const meta = NOTEBOOK_QUADRANT_META[key];
@@ -321,8 +321,8 @@ export function OverviewBoards({
             })}
           </div>
 
-          {/* 桌面：原四象限（暂不改） */}
-          <div className="hidden grid-cols-1 gap-3 sm:grid-cols-2 md:grid">
+          {/* 桌面/平板：2×2 四象限（每行两个） */}
+          <div className="hidden gap-3 sm:grid sm:grid-cols-2">
             {boardColumns.map((col) => (
               <div
                 key={col.key}
@@ -475,35 +475,39 @@ export function OverviewBoards({
         />
       ) : null}
 
-      {createFor && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh] md:hidden">
-              <div className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
-                    快速创建
-                  </h2>
-                  <button
-                    type="button"
-                    className="rounded px-2 py-1 text-sm text-[var(--text-muted)]"
-                    onClick={() => setCreateFor(null)}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <QuickCreateTodo
-                  key={`${createFor.spaceId}-${createFor.priority}`}
-                  spaces={spaces}
-                  defaultSpaceId={createFor.spaceId}
-                  initialPriority={createFor.priority}
-                  bare
-                  onCreated={() => setCreateFor(null)}
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {createFor ? (
+        <Modal
+          open
+          onClose={() => setCreateFor(null)}
+          title="快速创建"
+          zClass="z-[80] md:hidden"
+          overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
+          className="w-full max-w-lg rounded-xl border border-[var(--border-muted)] bg-white p-4 shadow-xl"
+        >
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-[var(--brand-ink)]">
+                快速创建
+              </h2>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-sm text-[var(--text-muted)]"
+                onClick={() => setCreateFor(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <QuickCreateTodo
+              key={`${createFor.spaceId}-${createFor.priority}`}
+              spaces={spaces}
+              defaultSpaceId={createFor.spaceId}
+              initialPriority={createFor.priority}
+              bare
+              onCreated={() => setCreateFor(null)}
+            />
+          </div>
+        </Modal>
+      ) : null}
     </section>
   );
 }
