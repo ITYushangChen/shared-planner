@@ -12,6 +12,13 @@ export async function notifyTodoAssignment(todoId: string) {
   });
   if (error) {
     console.warn("notify_todo_assignment:", error.message);
+    // 冲突检测失败时给用户可见提示，避免静默漏检（RPC 失败但改期已保存）
+    emitNotificationToast({
+      title: "日程冲突检测未完成",
+      body: "排期已保存，但冲突检测未能完成，请稍后刷新页面查看冲突标红",
+      id: `conflict-fail-${todoId}`,
+      type: "error",
+    });
     return null;
   }
 
