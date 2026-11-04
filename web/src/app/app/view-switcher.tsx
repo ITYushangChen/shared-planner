@@ -16,6 +16,7 @@ const RANGES = [
   ["day", "日", "日视图"],
   ["week", "周", "周视图"],
   ["month", "月", "月视图"],
+  ["all", "全部", "全部任务（不限时间）"],
 ] as const;
 
 const VIEWS = [
@@ -34,7 +35,9 @@ export function ViewSwitcher() {
 
   const rawRange = searchParams.get("range");
   const range: RangeKey =
-    rawRange === "day" || rawRange === "month" ? rawRange : "week";
+    rawRange === "day" || rawRange === "month" || rawRange === "all"
+      ? rawRange
+      : "week";
   const rawView = searchParams.get("view");
   const view: ViewKey =
     rawView === "boards" || rawView === "list" ? rawView : "calendar";

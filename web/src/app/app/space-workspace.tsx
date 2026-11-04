@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import dynamic from "next/dynamic";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   filterCompletedForViewer,
   filterTodosForViewer,
@@ -109,6 +109,8 @@ export function SpaceWorkspace({
   deferTodos = false,
 }: Props) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const view = parseSpaceView(searchParams.get("view"));
   const range = parseRange(searchParams.get("range"));
   const assigneeId = searchParams.get("assignee") || "";
@@ -422,6 +424,26 @@ export function SpaceWorkspace({
     return filteredCompleted.filter((t) => todoOverlapsRange(t, start, end));
   }, [filteredCompleted, range]);
 
+  // 当前时间范围外、被隐藏于象限之外的「已排期」待办数量（用于空态引导"查看全部"）。
+  // 注意 todoOverlapsRange 对未排期待办返回 true（它们始终进入 boardsOpen），
+  // 但象限只渲染 boardsOpen.filter(t => t.start_at)（已排期），未排期另用「未排期」区块展示。
+  // 故需以「已排期总数 - 已排期且在范围内」精确统计真正被范围隐藏的条数，
+  // 避免把已展示的未排期任务误算进 hiddenCount。
+  const hiddenCount = useMemo(() => {
+    if (range === "all") return 0;
+    const scheduledTotal = filteredTodos.filter((t) => t.start_at).length;
+    const scheduledInRange = boardsOpen.filter((t) => t.start_at).length;
+    return Math.max(0, scheduledTotal - scheduledInRange);
+  }, [filteredTodos, boardsOpen, range]);
+
+  const onShowAll = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("range", "all");
+    startTransition(() => {
+      router.replace(`${pathname ?? "/app"}?${params.toString()}`, { scroll: false });
+    });
+  }, [searchParams, router, pathname]);
+
   return (
     <div
       className={[
@@ -440,6 +462,8 @@ export function SpaceWorkspace({
           todos={boardsOpen.filter((t) => t.start_at)}
           completed={boardsDone.filter((t) => t.start_at)}
           unscheduledTodos={filteredUnscheduled}
+          hiddenCount={hiddenCount}
+          onShowAll={onShowAll}
           members={members}
           canAssign={canAssign}
           hideTitle
@@ -467,6 +491,8 @@ export function SpaceWorkspace({
           todos={boardsOpen.filter((t) => t.start_at)}
           completed={boardsDone.filter((t) => t.start_at)}
           unscheduledTodos={filteredUnscheduled}
+          hiddenCount={hiddenCount}
+          onShowAll={onShowAll}
           members={members}
           canAssign={canAssign}
           hideTitle

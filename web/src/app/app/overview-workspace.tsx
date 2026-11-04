@@ -6,9 +6,10 @@ import {
   useMemo,
   useRef,
   useState,
+  startTransition,
 } from "react";
 import dynamic from "next/dynamic";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   TODO_DELETED,
@@ -87,6 +88,8 @@ export function OverviewWorkspace({
   deferUnscheduled = false,
 }: Props) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const tab = parseTab(searchParams.get("view"));
   const range = parseRange(searchParams.get("range"));
   const assigneeId = searchParams.get("assignee") || "";
@@ -472,6 +475,26 @@ export function OverviewWorkspace({
     return filteredCompleted.filter((t) => todoOverlapsRange(t, start, end));
   }, [filteredCompleted, range]);
 
+  // 当前时间范围外、被隐藏于象限之外的「已排期」待办数量（用于空态引导"查看全部"）。
+  // todoOverlapsRange 对未排期返回 true（未排期另用「未排期」区块展示），
+  // 故以「已排期总数 - 已排期且在范围内」精确统计，避免误算未排期任务。
+  const hiddenCount = useMemo(() => {
+    if (range === "all") return 0;
+    const scheduledTotal = filteredTodos.filter((t) => t.start_at).length;
+    const scheduledInRange = boardsOpen.filter((t) => t.start_at).length;
+    return Math.max(0, scheduledTotal - scheduledInRange);
+  }, [filteredTodos, boardsOpen, range]);
+
+  const onShowAll = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("range", "all");
+    startTransition(() => {
+      router.replace(`${pathname ?? "/app"}?${params.toString()}`, {
+        scroll: false,
+      });
+    });
+  }, [searchParams, router, pathname]);
+
   return (
     <div
       className={[
@@ -484,6 +507,8 @@ export function OverviewWorkspace({
           todos={boardsOpen.filter((t) => t.start_at)}
           completed={boardsDone.filter((t) => t.start_at)}
           unscheduledTodos={filteredUnscheduled}
+          hiddenCount={hiddenCount}
+          onShowAll={onShowAll}
           members={flatMembers}
           canAssign={canAssignAny}
           hideTitle
@@ -520,6 +545,8 @@ export function OverviewWorkspace({
           todos={boardsOpen.filter((t) => t.start_at)}
           completed={boardsDone.filter((t) => t.start_at)}
           unscheduledTodos={filteredUnscheduled}
+          hiddenCount={hiddenCount}
+          onShowAll={onShowAll}
           members={flatMembers}
           canAssign={canAssignAny}
           hideTitle

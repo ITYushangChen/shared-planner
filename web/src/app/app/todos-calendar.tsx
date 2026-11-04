@@ -1153,16 +1153,15 @@ export function TodosCalendar({
         .sharetodo-calendar .fc-timegrid-event {
           min-height: 2.5rem;
         }
-        /* 拖拽：隐藏拖影 / mirror，只保留落点反馈 */
+        /* 拖拽/改时长：原任务始终可见；拖影改为半透明预览 */
         .fc-event-mirror,
-        .fc-event-dragging,
-        .fc-event-mirror.fc-event,
-        .fc-event-dragging.fc-event {
-          opacity: 0 !important;
-          visibility: hidden !important;
-          box-shadow: none !important;
+        .fc-event-mirror.fc-event {
+          opacity: 0.55 !important;
+          visibility: visible !important;
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12) !important;
           pointer-events: none !important;
         }
+        /* 不再对 .fc-event-dragging 设 opacity:0，原任务在整个拖拽期间保持显示 */
         .sharetodo-calendar .fc-timegrid-event .fc-event-main,
         .sharetodo-calendar .fc-timegrid-event .fc-event-main-frame {
           overflow: visible;

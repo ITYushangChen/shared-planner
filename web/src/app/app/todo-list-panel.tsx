@@ -33,6 +33,10 @@ type Props = {
   defaultSpaceId?: string;
   /** true：象限内同时展示已完成（四象限）；false：仅未完成（四象限待办） */
   includeDone?: boolean;
+  /** 当前时间范围外、或被指派给当前筛选人但未显示的待办数量（用于空态引导） */
+  hiddenCount?: number;
+  /** 点击"查看全部"时回调（切到 range=all） */
+  onShowAll?: () => void;
 };
 
 function sortByTime(list: TodoRow[]) {
@@ -72,6 +76,8 @@ export function TodoListPanel({
   spaces = [],
   defaultSpaceId,
   includeDone = false,
+  hiddenCount = 0,
+  onShowAll,
 }: Props) {
   const [selected, setSelected] = useState<TodoRow | null>(null);
   const [scheduleHint, setScheduleHint] = useState(false);
@@ -181,6 +187,53 @@ export function TodoListPanel({
           </NotebookQuadrant>
         ))}
       </div>
+
+      {listed.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-600">
+          {hiddenCount > 0 && onShowAll ? (
+            <span className="flex flex-wrap items-center gap-2">
+              <span>该时间范围暂无未完成任务，你还有 {hiddenCount} 项任务排在其它的时间。</span>
+              <button
+                type="button"
+                onClick={onShowAll}
+                className="rounded-md border border-[var(--brand)] bg-[var(--brand-soft)] px-2 py-1 font-medium text-[var(--brand)] hover:bg-[var(--brand)] hover:text-white"
+              >
+                查看全部（不限时间）
+              </button>
+            </span>
+          ) : (
+            <span>该时间范围暂无未完成任务。</span>
+          )}
+        </div>
+      ) : null}
+
+      {unscheduledTodos.filter((t) => t.status !== "done").length > 0 ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-zinc-700">
+            未排期（{unscheduledTodos.filter((t) => t.status !== "done").length}）
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {unscheduledTodos
+              .filter((t) => t.status !== "done")
+              .map((t) => (
+                <CompactTodoCard
+                  key={t.id}
+                  todo={t}
+                  variant="card"
+                  layout="stack"
+                  showComplete
+                  importanceDrag
+                  onToggleImportance={() => void drop.toggleImportance(t)}
+                  conflicted={conflictIds.has(t.id)}
+                  onOpen={() => {
+                    setScheduleHint(false);
+                    setSelected(t);
+                  }}
+                />
+              ))}
+          </div>
+        </div>
+      ) : null}
 
       {selected ? (
         <TodoEditor
