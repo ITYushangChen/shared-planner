@@ -18,7 +18,7 @@ export function createUserClient(accessToken: string): SupabaseClient {
       persistSession: false,
       autoRefreshToken: false,
     },
-    realtime: realtimeEnabled ? realtimeOpts : false,
+    realtime: realtimeEnabled ? realtimeOpts : undefined,
   });
 }
 
@@ -28,7 +28,7 @@ export function createAdminClient(): SupabaseClient {
       persistSession: false,
       autoRefreshToken: false,
     },
-    realtime: realtimeEnabled ? realtimeOpts : false,
+    realtime: realtimeEnabled ? realtimeOpts : undefined,
   });
 }
 
