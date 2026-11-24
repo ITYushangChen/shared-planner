@@ -44,3 +44,7 @@ next-env.d.ts
 # local build / dev logs (do not commit)
 build.log
 start*.log
+
+# 本地构建日志（_ 前缀）
+_build*.log
+_dev*.log

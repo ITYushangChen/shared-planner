@@ -17,7 +17,7 @@ CREATE OR REPLACE FUNCTION public.set_recovery_code(
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 BEGIN
   IF p_code IS NULL OR length(trim(p_code)) < 8 THEN
@@ -39,7 +39,7 @@ CREATE OR REPLACE FUNCTION public.verify_recovery_code(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_id UUID;

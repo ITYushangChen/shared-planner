@@ -16,3 +16,6 @@ services/api/dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# e2e 验收临时 SQL
+migrations/_e2e_*.sql
