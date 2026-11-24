@@ -596,32 +596,50 @@ export function AppSidebar({
         </p>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--border-muted)] bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {(
-          [
-            ["day", "日"],
-            ["week", "周"],
-            ["month", "月"],
-          ] as const
-        ).map(([key, label]) => {
-          const active =
-            (onOverviewPage || Boolean(spaceIdFromPath)) &&
-            overviewRange === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              className={mobileNavClass(active)}
-              onClick={() => goOverviewRange(key)}
-            >
-              {label}
-            </button>
-          );
-        })}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-[var(--border-muted)] bg-white px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
+        {/* 时间粒度胶囊分段：日/周/月（仅手机版） */}
+        <div
+          className="flex flex-1 items-center gap-0.5 rounded-full bg-[var(--surface-muted)] p-1"
+          role="group"
+          aria-label="时间范围"
+        >
+          {(
+            [
+              ["day", "日"],
+              ["week", "周"],
+              ["month", "月"],
+            ] as const
+          ).map(([key, label]) => {
+            const active =
+              (onOverviewPage || Boolean(spaceIdFromPath)) &&
+              overviewRange === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => goOverviewRange(key)}
+                className={[
+                  "flex-1 rounded-full py-1.5 text-sm font-medium transition-all duration-200",
+                  active
+                    ? "bg-white text-[var(--brand-ink)] shadow-sm"
+                    : "text-[var(--text-secondary)]",
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
         <Link
           href="/app/settings"
           prefetch
-          className={mobileNavClass(onProfile)}
+          className={[
+            "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200",
+            onProfile
+              ? "font-bold text-[var(--brand-ink)]"
+              : "text-[var(--text-muted)]",
+          ].join(" ")}
         >
           设置
         </Link>
@@ -1112,15 +1130,6 @@ function SectionHeader({
 
 const sectionAddBtnClass =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--brand-ink)]";
-
-function mobileNavClass(active: boolean) {
-  return [
-    "flex-1 py-3 text-center text-sm transition-colors duration-200",
-    active
-      ? "font-bold text-zinc-950"
-      : "font-medium text-[var(--text-muted)]",
-  ].join(" ");
-}
 
 function drawerViewBtn(active: boolean) {
   return [
