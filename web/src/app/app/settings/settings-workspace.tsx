@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SpaceNavItem } from "@/lib/todos";
 import { ProfilePanel } from "./profile-panel";
@@ -9,128 +10,20 @@ import { NotificationPanel } from "./notification-panel";
 import { DataPanel } from "./data-panel";
 import { SecurityPanel } from "./security-panel";
 import { AboutPanel } from "./about-panel";
+import { ProfileOverview } from "./profile-overview";
+import {
+  ADMIN_DASHBOARD_GROUP,
+  ADMIN_GROUP,
+  ALL_TABS,
+  GROUPS,
+  isTabId,
+  type TabId,
+} from "./settings-groups";
 import { AdminResetPanel } from "@/app/admin/reset/admin-reset-panel";
 import { AdminToolsPanel } from "@/app/admin/tools/admin-tools-panel";
 import { AdminAccountsPanel } from "@/app/admin/admin-accounts-panel";
 import { AdminErrorsPanel } from "@/app/admin/admin-errors-panel";
 import { AdminAuditPanel } from "@/app/admin/admin-audit-panel";
-
-type TabId =
-  | "profile"
-  | "appearance"
-  | "notifications"
-  | "data"
-  | "security"
-  | "about"
-  | "admin-accounts"
-  | "admin-errors"
-  | "admin-audit"
-  | "admin-reset"
-  | "admin-ban"
-  | "admin-signout"
-  | "admin-delete"
-  | "admin-recovery";
-
-const GROUPS: Array<{
-  title: string;
-  items: Array<{ id: TabId; label: string; desc: string }>;
-}> = [
-  {
-    title: "账户",
-    items: [
-      { id: "profile", label: "个人资料", desc: "头像、昵称、时区和登录邮箱" },
-      { id: "security", label: "安全与登录", desc: "修改密码、退出登录" },
-    ],
-  },
-  {
-    title: "应用",
-    items: [
-      { id: "appearance", label: "外观", desc: "背景、任务颜色与空间级覆盖" },
-      {
-        id: "notifications",
-        label: "通知",
-        desc: "按类型开关通知与右下角弹窗",
-      },
-    ],
-  },
-  {
-    title: "其他",
-    items: [
-      { id: "data", label: "数据与集成", desc: "导出任务数据" },
-      { id: "about", label: "关于", desc: "账户信息与快捷入口" },
-    ],
-  },
-];
-
-const TABS = GROUPS.flatMap((g) => g.items);
-
-// 管理后台看板分组：账户管理 / 错误日志 / 操作记录（仅管理员可见，直接内嵌在设置页）
-const ADMIN_DASHBOARD_GROUP: (typeof GROUPS)[number] = {
-  title: "管理后台",
-  items: [
-    {
-      id: "admin-accounts",
-      label: "账户管理",
-      desc: "启用/禁用、升级/降级、查看每个账号的空间个数",
-    },
-    {
-      id: "admin-errors",
-      label: "错误日志",
-      desc: "报错信息、报错操作与时间",
-    },
-    {
-      id: "admin-audit",
-      label: "操作记录",
-      desc: "管理员关键写操作的审计日志",
-    },
-  ],
-};
-
-// 管理员工具分组：仅管理员可见（由 isAdmin 控制是否拼进导航）
-const ADMIN_GROUP: (typeof GROUPS)[number] = {
-  title: "管理员工具",
-  items: [
-    {
-      id: "admin-reset",
-      label: "协助重置密码",
-      desc: "凭邮箱为用户重置密码并生成新恢复码",
-    },
-    {
-      id: "admin-ban",
-      label: "封禁 / 解封",
-      desc: "封禁用户并强制其所有设备下线，或解除封禁",
-    },
-    {
-      id: "admin-signout",
-      label: "强制下线",
-      desc: "吊销某用户所有设备的会话",
-    },
-    {
-      id: "admin-delete",
-      label: "删除账号",
-      desc: "删除用户及其数据（含空间转让/清理）",
-    },
-    {
-      id: "admin-recovery",
-      label: "恢复码管理",
-      desc: "重生成或吊销用户的一次性恢复码",
-    },
-  ],
-};
-
-function isTabId(v: string | null): v is TabId {
-  return (
-    TABS.some((t) => t.id === v) ||
-    v === "admin-accounts" ||
-    v === "admin-errors" ||
-    v === "admin-audit" ||
-    v === "admin-reset" ||
-    v === "admin-ban" ||
-    v === "admin-signout" ||
-    v === "admin-delete" ||
-    v === "admin-recovery"
-  );
-}
 
 type Props = {
   email: string;
@@ -149,15 +42,7 @@ export function SettingsWorkspace(props: Props) {
   const router = useRouter();
   const params = useSearchParams();
   const raw = params.get("tab");
-  const active: TabId = isTabId(raw) ? raw : "profile";
-  const groups = props.isAdmin
-    ? [...GROUPS, ADMIN_DASHBOARD_GROUP, ADMIN_GROUP]
-    : GROUPS;
-  const meta = [
-    ...TABS,
-    ...ADMIN_DASHBOARD_GROUP.items,
-    ...ADMIN_GROUP.items,
-  ].find((t) => t.id === active)!;
+  const active: TabId | null = isTabId(raw) ? raw : null;
 
   const go = useCallback(
     (id: TabId) => {
@@ -183,10 +68,43 @@ export function SettingsWorkspace(props: Props) {
     });
   }, []);
 
+  // 无 ?tab 参数 = 「我的页」总览（头像卡片 + 消息红点 + 设置分组）
+  if (active === null) {
+    return (
+      <ProfileOverview
+        email={props.email}
+        displayName={props.displayName}
+        avatarUrl={props.avatarUrl}
+        isAdmin={props.isAdmin}
+      />
+    );
+  }
+
+  const groups = props.isAdmin
+    ? [...GROUPS, ADMIN_DASHBOARD_GROUP, ADMIN_GROUP]
+    : GROUPS;
+  const meta = ALL_TABS.find((t) => t.id === active)!;
+
   return (
     <main className="flex flex-1 flex-col p-4 md:p-6">
       <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-white shadow-sm">
         <header className="border-b border-[var(--border-muted)] px-5 py-4 md:px-8">
+          <Link
+            href="/app/settings"
+            className="mb-2 inline-flex items-center gap-1 text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--brand)]"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 6l-6 6 6 6" />
+            </svg>
+            返回我的
+          </Link>
           <h1 className="text-xl font-semibold text-[var(--brand-ink)]">设置</h1>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
             管理你的账号、外观、通知与数据
