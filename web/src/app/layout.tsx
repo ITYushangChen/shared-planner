@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
+import { ErrorReporter } from "./error-reporter";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-[var(--background,#fff)] text-[var(--foreground)]">
+        <ErrorReporter />
         {children}
       </body>
     </html>

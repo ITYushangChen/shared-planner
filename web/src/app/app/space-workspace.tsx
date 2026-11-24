@@ -27,7 +27,7 @@ import {
   type TodoUnscheduledDetail,
   type TodoUpsertedDetail,
 } from "@/lib/todo-schedule-events";
-import { TODOS_REALTIME_CHANGED } from "@/lib/use-todos-realtime";
+import { TODOS_REALTIME_CHANGED, TODOS_REALTIME_DELETED } from "@/lib/use-todos-realtime";
 import {
   getOverviewBounds,
   isAssignedToUser,
@@ -41,6 +41,11 @@ const TodoListPanel = dynamic(
   () =>
     import("./todo-list-panel").then((m) => ({ default: m.TodoListPanel })),
   { loading: () => null },
+);
+const OverviewBoards = dynamic(
+  () =>
+    import("./overview-boards").then((m) => ({ default: m.OverviewBoards })),
+  { ssr: false, loading: () => null },
 );
 /** 日历 chunk / 数据未到位时的骨架占位，避免空白像"坏了" */
 function CalendarLoading() {
@@ -173,6 +178,7 @@ export function SpaceWorkspace({
         cached,
         canAssign,
         currentUserId,
+        true,
       );
       setScheduledLocal(filtered.scheduled);
       setUnscheduledLocal(filtered.unscheduled);
@@ -194,6 +200,7 @@ export function SpaceWorkspace({
           },
           canAssign,
           currentUserId,
+          true,
         );
         setScheduledLocal(filtered.scheduled);
         setTodosLocal([...filtered.scheduled, ...filtered.unscheduled]);
@@ -205,6 +212,7 @@ export function SpaceWorkspace({
           data,
           canAssign,
           currentUserId,
+          true,
         );
         setScheduledLocal(filtered.scheduled);
         setUnscheduledLocal(filtered.unscheduled);
@@ -337,6 +345,7 @@ export function SpaceWorkspace({
             },
             canAssign,
             currentUserId,
+            true,
           );
           setScheduledLocal(filtered.scheduled);
           setTodosLocal([...filtered.scheduled, ...filtered.unscheduled]);
@@ -344,7 +353,7 @@ export function SpaceWorkspace({
       onData: (data) => {
         if (cancelled || spaceIdRef.current !== space.id) return;
         setTruncated(data.truncated ?? null);
-        const filtered = filterTodosForViewer(data, canAssign, currentUserId);
+        const filtered = filterTodosForViewer(data, canAssign, currentUserId, true);
         setScheduledLocal(filtered.scheduled);
           setUnscheduledLocal(filtered.unscheduled);
           setTodosLocal([...filtered.scheduled, ...filtered.unscheduled]);
@@ -368,6 +377,23 @@ export function SpaceWorkspace({
     return () =>
       window.removeEventListener(TODOS_REALTIME_CHANGED, onRemoteChange);
   }, [space.id, canAssign, currentUserId, view]);
+
+  // 订阅远程删除：别人删任务时精准隐藏（加进 removedIds，所有列表统一过滤）
+  useEffect(() => {
+    function onRemoteDeleted(ev: Event) {
+      const todoId = (ev as CustomEvent<{ todoId: string }>).detail?.todoId;
+      if (!todoId) return;
+      setRemovedIds((prev) => {
+        if (prev.has(todoId)) return prev;
+        const next = new Set(prev);
+        next.add(todoId);
+        return next;
+      });
+    }
+    window.addEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+    return () =>
+      window.removeEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+  }, []);
 
   const unscheduled = useMemo(
     () => unscheduledLocal.filter((t) => !removedIds.has(t.id)),
@@ -458,18 +484,14 @@ export function SpaceWorkspace({
       ) : null}
 
       {view === "boards" ? (
-        <TodoListPanel
-          todos={boardsOpen.filter((t) => t.start_at)}
-          completed={boardsDone.filter((t) => t.start_at)}
-          unscheduledTodos={filteredUnscheduled}
-          hiddenCount={hiddenCount}
-          onShowAll={onShowAll}
+        <OverviewBoards
+          groupBy="priority"
+          todos={boardsOpen}
+          completed={boardsDone}
           members={members}
           canAssign={canAssign}
-          hideTitle
           spaces={[space]}
-          defaultSpaceId={space.id}
-          includeDone
+          boardRange="all"
         />
       ) : null}
 

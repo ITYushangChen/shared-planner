@@ -6,7 +6,6 @@ import { Draggable } from "@fullcalendar/interaction";
 import { createClient } from "@/lib/supabase/client";
 import { emitTodoUpserted } from "@/lib/todo-schedule-events";
 import { suppressTodosRealtimeRefresh } from "@/lib/todos-realtime-gate";
-import { DEFAULT_DEPARTMENT } from "@/lib/departments";
 import {
   durationToFcString,
   type SpaceMemberOption,
@@ -107,7 +106,6 @@ export function UnscheduledList({
         title: `${todo.title}（副本）`,
         description: todo.description,
         priority: todo.priority,
-        department: todo.department ?? DEFAULT_DEPARTMENT,
         status: "todo",
         start_at: null,
         end_at: null,

@@ -11,10 +11,14 @@ import {
   reorderTodos,
   scheduleTodos,
   type AiTodoPreview,
+  type ConflictItem,
   type ConflictMove,
   type ScheduleSuggestion,
+  type ScheduleSkipped,
+  type ReorderResult,
 } from "@/lib/ai-api";
 import type { SpaceNavItem } from "@/lib/todos";
+import { createClient } from "@/lib/supabase/client";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { mapAuthError } from "@/lib/error-map";
 
@@ -43,6 +47,50 @@ const PRIORITY_LABEL = {
 } as const;
 /** 排期/冲突/排序/摘要可选：全部空间 */
 const ALL_SPACES = "__all__";
+
+/** 把「排序」模式返回的裸分数换成可读的紧急性文案（紧急性 / 截止时间 / 逾期 / 已完成） */
+function formatReorderMeta(t: {
+  priority?: string | null;
+  status?: string | null;
+  due_at?: string | null;
+  start_at?: string | null;
+}) {
+  const now = Date.now();
+  const isDone = t.status === "done";
+  const due = t.due_at ? Date.parse(t.due_at) : NaN;
+  const hasDue = !Number.isNaN(due);
+  const isOverdue = hasDue && due < now && !isDone;
+
+  let dueLabel: string;
+  if (isDone) dueLabel = "已完成";
+  else if (!hasDue) dueLabel = "无截止";
+  else if (due < now) {
+    const overdueDays = Math.floor((now - due) / 86_400_000);
+    dueLabel = overdueDays >= 1 ? `已逾期 ${overdueDays} 天` : "已逾期";
+  } else {
+    const days = Math.floor((due - now) / 86_400_000);
+    if (days >= 1) dueLabel = `${days} 天后截止`;
+    else {
+      const d = new Date(due);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      dueLabel = `今天 ${hh}:${mm} 截止`;
+    }
+  }
+
+  let urgency: string;
+  if (isDone) urgency = "已完成";
+  else if (isOverdue) urgency = "紧急";
+  else if (hasDue) {
+    const hours = (due - now) / 3_600_000;
+    if (hours <= 24) urgency = "紧急";
+    else if (hours <= 72) urgency = "较高";
+    else if (hours <= 240) urgency = "普通";
+    else urgency = "宽松";
+  } else urgency = "普通";
+
+  return { urgency, dueLabel, isOverdue, isDone };
+}
 
 export function AiAssistant({
   spaces,
@@ -113,14 +161,33 @@ export function AiAssistant({
   const [schedulePreview, setSchedulePreview] = useState<
     ScheduleSuggestion[] | null
   >(null);
+  const [scheduleSkipped, setScheduleSkipped] = useState<ScheduleSkipped[]>([]);
   const [conflictPreview, setConflictPreview] = useState<{
     conflicts: Array<{ a: string; b: string }>;
+    detail: ConflictItem[];
     suggestions: ConflictMove[];
   } | null>(null);
   const [reorderPreview, setReorderPreview] = useState<
-    Array<{ id: string; title: string; sort_score: number; priority: string }>
+    ReorderResult["todos"] | null
+  >(null);
+
+  /* ---- 排期范围：是否纳入未排期任务 / 纳入哪些 ---- */
+  /** 是否把未排期任务一起纳入本次排期 */
+  const [includeUnscheduled, setIncludeUnscheduled] = useState(true);
+  const [unscheduledList, setUnscheduledList] = useState<
+    Array<{
+      id: string;
+      title: string;
+      space_id: string;
+      priority: string | null;
+      due_at: string | null;
+    }>
     | null
   >(null);
+  /** null = 全选（不传 todo_ids，交给后端按全部未排期排） */
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [loadingUnscheduled, setLoadingUnscheduled] = useState(false);
 
   const apiReady = Boolean(getApiBaseUrl());
   const tz =
@@ -128,12 +195,86 @@ export function AiAssistant({
     Intl.DateTimeFormat().resolvedOptions().timeZone ||
     "Asia/Shanghai";
 
+  const loadUnscheduled = useCallback(async () => {
+    setLoadingUnscheduled(true);
+    try {
+      const supabase = createClient();
+      const scopeIds = allSpaces ? spaces.map((s) => s.id) : [spaceId];
+      if (scopeIds.length === 0 || !scopeIds[0]) return;
+      const { data } = await supabase
+        .from("todos")
+        .select("id,title,space_id,priority,due_at")
+        .in("space_id", scopeIds)
+        .is("start_at", null)
+        .neq("status", "done")
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .limit(200);
+      setUnscheduledList(
+        (data ?? []) as Array<{
+          id: string;
+          title: string;
+          space_id: string;
+          priority: string | null;
+          due_at: string | null;
+        }>,
+      );
+      // 新拉到的列表默认全选
+      setSelectedIds(null);
+    } finally {
+      setLoadingUnscheduled(false);
+    }
+  }, [allSpaces, spaceId, spaces]);
+
+  // 切空间 / 切模式后列表失效
+  useEffect(() => {
+    setUnscheduledList(null);
+    setSelectedIds(null);
+    setPickerOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spaceId, mode]);
+
+  // 展开选择器时才拉列表，避免每次打开助手都打后端
+  useEffect(() => {
+    if (
+      mode === "schedule" &&
+      pickerOpen &&
+      !unscheduledList &&
+      !loadingUnscheduled
+    ) {
+      void loadUnscheduled();
+    }
+  }, [mode, pickerOpen, unscheduledList, loadingUnscheduled, loadUnscheduled]);
+
+  /** 本次请求要排的任务 id：undefined = 全部未排期 */
+  const scheduleRequestIds = useMemo(() => {
+    if (!includeUnscheduled) return [];
+    // 没展开过列表 / 全选 → 交给后端按全部未排期处理
+    if (!unscheduledList) return undefined;
+    if (selectedIds === null) return undefined;
+    if (selectedIds.length === 0) return [];
+    if (selectedIds.length === unscheduledList.length) return undefined;
+    return selectedIds;
+  }, [includeUnscheduled, unscheduledList, selectedIds]);
+
+  const unscheduledTotal = unscheduledList?.length ?? 0;
+  const selectedCount = selectedIds === null ? unscheduledTotal : selectedIds.length;
+  const isChecked = (id: string) =>
+    selectedIds === null || selectedIds.includes(id);
+
+  function toggleTodoId(id: string) {
+    const base = selectedIds ?? unscheduledList?.map((t) => t.id) ?? [];
+    setSelectedIds(
+      base.includes(id) ? base.filter((x) => x !== id) : [...base, id],
+    );
+  }
+
   const placeholders = useMemo(
     () => ({
       create:
         "例：周五下班前上线 V2.3，周三下午评审，周四全天开发联调，指派给小明",
       schedule: "例：把未排期任务安排到本周工作时间内，优先重要任务",
-      conflict: "检测当前用户日程冲突并给出挪动建议",
+      conflict:
+        "检测所选范围的排期时间重叠（同一人被安排在同一时段）并给出挪动建议",
       reorder: "按紧急度重算排序分并更新列表",
       summary: "生成「指派给我」的今日待办摘要并写入通知",
     }),
@@ -143,6 +284,7 @@ export function AiAssistant({
   function clearPreviews() {
     setCreatePreview(null);
     setSchedulePreview(null);
+    setScheduleSkipped([]);
     setConflictPreview(null);
     setReorderPreview(null);
     setSummary(null);
@@ -170,8 +312,17 @@ export function AiAssistant({
       setMsg("请选择空间");
       return;
     }
-    if ((mode === "create" || mode === "schedule") && !text.trim()) {
+    if (mode === "create" && !text.trim()) {
       setMsg("请先输入一句话");
+      return;
+    }
+    // 排期：关掉「纳入未排期」又没勾任何任务 → 没有可排对象
+    if (mode === "schedule" && scheduleRequestIds && scheduleRequestIds.length === 0) {
+      setMsg(
+        includeUnscheduled
+          ? "请至少勾选一条要排期的任务"
+          : "已关闭「纳入未排期任务」，请先勾选要排期的任务",
+      );
       return;
     }
 
@@ -197,17 +348,23 @@ export function AiAssistant({
           space_id: allSpaces ? undefined : spaceId,
           all_spaces: allSpaces,
           text: text.trim() || undefined,
+          todo_ids: scheduleRequestIds ?? undefined,
+          include_unscheduled: includeUnscheduled,
           confirm: false,
           timezone: tz,
         });
-        if ("message" in res && (!res.suggestions || res.suggestions.length === 0)) {
+        if (!("suggestions" in res) || res.suggestions.length === 0) {
+          setSchedulePreview(null);
+          setScheduleSkipped("skipped" in res ? res.skipped ?? [] : []);
           setMsg(res.message || "没有需要排期的待办");
-        } else if ("suggestions" in res) {
+        } else {
           setSchedulePreview(res.suggestions);
+          setScheduleSkipped("skipped" in res ? res.skipped ?? [] : []);
           setMsg(
-            res.suggestions.length
-              ? `预览 ${res.suggestions.length} 条排期建议${allSpaces ? "（全部空间）" : ""}`
-              : "未生成排期建议",
+            res.message ||
+              `预览 ${res.suggestions.length} 条排期建议${
+                allSpaces ? "（全部空间）" : ""
+              }`,
           );
         }
       } else if (mode === "conflict") {
@@ -216,17 +373,28 @@ export function AiAssistant({
           all_spaces: allSpaces,
           confirm: false,
         });
-        if ("message" in res && (!("suggestions" in res) || !res.suggestions?.length)) {
+        const detail =
+          "conflicts_detail" in res && res.conflicts_detail
+            ? res.conflicts_detail
+            : [];
+        const moves = "suggestions" in res ? res.suggestions ?? [] : [];
+        if (moves.length === 0) {
+          // 有冲突但没有建议时，也要把冲突任务显示出来，不能只留一句提示
+          setConflictPreview(
+            detail.length > 0 ? { conflicts: [], detail, suggestions: [] } : null,
+          );
           setMsg(res.message || "未检测到冲突");
-        } else if ("suggestions" in res) {
+        } else {
           setConflictPreview({
             conflicts: "conflicts" in res ? res.conflicts : [],
-            suggestions: res.suggestions,
+            detail,
+            suggestions: moves,
           });
           setMsg(
-            res.suggestions.length
-              ? `发现冲突，${res.suggestions.length} 条调整建议${allSpaces ? "（全部空间）" : ""}`
-              : "检测到冲突但无建议",
+            res.message ||
+              `发现冲突，${moves.length} 条调整建议${
+                allSpaces ? "（全部空间）" : ""
+              }`,
           );
         }
       } else if (mode === "reorder") {
@@ -290,11 +458,15 @@ export function AiAssistant({
           space_id: allSpaces ? undefined : spaceId,
           all_spaces: allSpaces,
           text: text.trim() || undefined,
+          todo_ids: scheduleRequestIds ?? undefined,
+          include_unscheduled: includeUnscheduled,
           confirm: true,
           timezone: tz,
         });
         if ("applied" in res) {
-          setMsg(`已应用 ${res.applied.length} 条排期`);
+          setMsg(
+            res.message || `已应用 ${res.applied.length} 条排期`,
+          );
           clearPreviews();
           router.refresh();
         }
@@ -305,7 +477,7 @@ export function AiAssistant({
           confirm: true,
         });
         if ("applied" in res) {
-          setMsg(`已调整 ${res.applied.length} 条`);
+          setMsg(res.message || `已调整 ${res.applied.length} 条`);
           clearPreviews();
           router.refresh();
         }
@@ -463,6 +635,106 @@ export function AiAssistant({
           <p className="text-xs text-zinc-500">{placeholders[mode]}</p>
         )}
 
+        {mode === "schedule" ? (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 px-3 py-2">
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-zinc-700">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-[#2f5f8f]"
+                checked={includeUnscheduled}
+                onChange={(e) => {
+                  setIncludeUnscheduled(e.target.checked);
+                  // 关掉时清空已选，避免误排
+                  setSelectedIds(e.target.checked ? null : []);
+                }}
+              />
+              <span>
+                纳入未排期任务
+                <span className="ml-1 text-zinc-400">
+                  （不勾选就只排你在下面挑的任务）
+                </span>
+              </span>
+            </label>
+
+            <div className="mt-1.5 pl-6">
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                className="text-xs text-[#2f5f8f] underline underline-offset-2"
+              >
+                {pickerOpen ? "收起任务列表" : "选择要排期的任务"}
+                <span className="ml-1 text-zinc-400 no-underline">
+                  {loadingUnscheduled
+                    ? "加载中…"
+                    : unscheduledList
+                      ? `已选 ${selectedCount}/${unscheduledTotal}`
+                      : "默认全部未排期"}
+                </span>
+              </button>
+
+              {pickerOpen ? (
+                <div className="mt-1.5">
+                  <div className="mb-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() =>
+                        setSelectedIds(unscheduledList?.map((t) => t.id) ?? null)
+                      }
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => setSelectedIds([])}
+                    >
+                      清空
+                    </button>
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => void loadUnscheduled()}
+                    >
+                      刷新
+                    </button>
+                  </div>
+                  <ul className="max-h-48 overflow-auto rounded-lg border border-zinc-200 bg-white">
+                    {unscheduledList && unscheduledList.length > 0 ? (
+                      unscheduledList.map((t) => (
+                        <li key={t.id}>
+                          <label className="flex cursor-pointer items-start gap-2 px-2 py-1.5 text-xs hover:bg-zinc-50">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 accent-[#2f5f8f]"
+                              checked={isChecked(t.id)}
+                              onChange={() => toggleTodoId(t.id)}
+                            />
+                            <span className="flex-1 text-zinc-700">{t.title}</span>
+                            {t.due_at ? (
+                              <span className="shrink-0 text-[11px] text-zinc-400">
+                                截止 {new Date(t.due_at).toLocaleDateString()}
+                              </span>
+                            ) : null}
+                          </label>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="px-2 py-2 text-xs text-zinc-400">
+                        {loadingUnscheduled ? "加载中…" : "没有未排期任务"}
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+
+            <p className="mt-1.5 pl-6 text-[11px] text-zinc-400">
+              排期会自动避开你和被指派人已有安排的时段，撞车会顺延到最近空闲时间。
+            </p>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
@@ -549,7 +821,9 @@ export function AiAssistant({
         <ul className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-100">
           {schedulePreview.map((s) => (
             <li key={s.todo_id} className="px-3 py-2 text-sm">
-              <p className="font-medium text-zinc-900">{s.title}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-medium text-zinc-900">{s.title}</p>
+              </div>
               <p className="text-xs text-zinc-500">
                 {new Date(s.start_at).toLocaleString()} –{" "}
                 {new Date(s.end_at).toLocaleString()}
@@ -560,6 +834,37 @@ export function AiAssistant({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {scheduleSkipped.length ? (
+        <ul className="mt-2 space-y-1 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2">
+          {scheduleSkipped.map((s) => (
+            <li key={s.todo_id} className="text-xs text-amber-800">
+              未排入「{s.title}」：{s.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {conflictPreview?.detail.length ? (
+        <div className="mt-3 rounded-lg border border-red-100 bg-red-50/50 px-3 py-2">
+          <p className="text-xs font-medium text-red-700">
+            以下任务时间重叠（同一指派人 / 无指派时按创建人）
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {conflictPreview.detail.map((c) => (
+              <li key={c.id} className="text-xs text-red-700/90">
+                · {c.title}
+                <span className="ml-1 text-red-500/80">
+                  {c.start_at ? new Date(c.start_at).toLocaleString() : ""}
+                  {c.end_at
+                    ? ` – ${new Date(c.end_at).toLocaleTimeString()}`
+                    : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {conflictPreview?.suggestions.length ? (
@@ -579,14 +884,27 @@ export function AiAssistant({
 
       {reorderPreview?.length ? (
         <ol className="mt-3 list-decimal space-y-1 rounded-lg border border-zinc-100 px-5 py-2 text-sm">
-          {reorderPreview.map((t) => (
-            <li key={t.id} className="text-zinc-800">
-              {t.title}
-              <span className="ml-2 text-xs text-zinc-400">
-                {t.priority} · score {t.sort_score}
-              </span>
-            </li>
-          ))}
+          {reorderPreview.map((t) => {
+            const m = formatReorderMeta(t);
+            return (
+              <li key={t.id} className="text-zinc-800">
+                {t.title}
+                <span
+                  className={`ml-2 text-xs ${
+                    m.isOverdue ? "text-red-500 font-medium" : "text-zinc-400"
+                  }`}
+                >
+                  {m.isDone
+                    ? "已完成"
+                    : `${PRIORITY_LABEL[t.priority as keyof typeof PRIORITY_LABEL] ?? ""}${
+                        PRIORITY_LABEL[t.priority as keyof typeof PRIORITY_LABEL]
+                          ? " · "
+                          : ""
+                      }${m.urgency} · ${m.dueLabel}`}
+                </span>
+              </li>
+            );
+          })}
         </ol>
       ) : null}
     </section>

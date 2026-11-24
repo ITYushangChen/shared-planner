@@ -54,497 +54,219 @@ export function categoryLabel(category: string): string {
   return category;
 }
 
-/** 大白话描述：按分类 + 状态给出口语化表述 */
-const PLAIN_PHRASES: Record<
-  string,
-  { done: string; doing: string; todo: string }
-> = {
+/* ---------------------------------------------------------------
+ * 任务描述生成（规则版兜底）
+ *
+ * 目标：语言严谨、信息完整、术语克制。
+ * 描述由三部分组成：
+ *   1) 状态 + 做到什么程度（progress）
+ *   2) 结果或作用（value）
+ *   3) 客观依据（detail：所属空间 / 时间 / 负责人，只有真实存在时才写）
+ * 不出现 BUG / FEAT 之类的内部代号，不使用「搞定、差不多」这类口语。
+ * ------------------------------------------------------------- */
+
+export type DescriptionContext = {
+  /** 所属空间名称 */
+  spaceName?: string;
+  /** 展示用时间，如 8/12 09:00~10:00、全天 8/12、完成于 8/12、待排期 */
+  timeLabel?: string;
+  /** Excel 口径的完成时间，如 2026-08-12 15:30 */
+  completedLabel?: string | null;
+  /** 负责人展示名 */
+  assignees?: string[];
+};
+
+/** 状态对应的书面说法 */
+const STATUS_WORD: Record<ReportStatus, string> = {
+  done: "已完成",
+  in_progress: "正在推进",
+  todo: "尚未开始",
+};
+
+type DescPhrase = { progress: string; value: string };
+
+/**
+ * 分类 × 状态的描述短语。
+ * progress = 做到什么程度（只陈述可确认的事实，不夸大成“彻底解决”，也不重复状态词）
+ * value    = 结果或作用（对业务、团队、客户的实际影响）
+ */
+const DESCRIPTION_PHRASES: Record<string, Record<ReportStatus, DescPhrase>> = {
   BUG: {
-    done: "已经修好了，问题解决，验证通过。",
-    doing: "正在修，问题已经定位到了。",
-    todo: "准备修，先把问题复现出来再动手。",
+    done: {
+      progress: "问题原因已查明并修正，相关功能经复核恢复正常",
+      value: "该问题不再影响正常使用，同类问题的发生概率同步降低",
+    },
+    in_progress: {
+      progress: "修正工作已进入处理阶段，问题原因已查明，尚未完成复核",
+      value: "处理完成后可恢复该功能的正常使用",
+    },
+    todo: {
+      progress: "问题已记录在案，等待安排处理",
+      value: "处理后可消除该问题对使用的影响",
+    },
   },
   FEAT: {
-    done: "已经做出来了，功能可以正常用。",
-    doing: "正在做，核心功能已经差不多了。",
-    todo: "准备做，先理清需求再动手。",
+    done: {
+      progress: "开发工作已收尾并通过复核，可按预期使用",
+      value: "为业务提供了新的支撑能力，原有的人工处理环节相应减少",
+    },
+    in_progress: {
+      progress: "主体功能已具备，细节完善与复核仍在进行",
+      value: "完成后可满足当前的业务使用需要",
+    },
+    todo: {
+      progress: "需求已确认，等待进入开发",
+      value: "完成后可补齐当前缺失的业务能力",
+    },
   },
   OPTIMIZE: {
-    done: "已经优化完了，速度明显变快了。",
-    doing: "正在优化，效果已经有一些了。",
-    todo: "准备优化，先找找哪里慢。",
+    done: {
+      progress: "处理速度与资源占用均有改善，复核结果符合预期",
+      value: "等待时间缩短，日常操作效率相应提升",
+    },
+    in_progress: {
+      progress: "主要耗时环节已定位，改进效果仍在观察",
+      value: "完成后可缩短处理时间、降低资源占用",
+    },
+    todo: {
+      progress: "改进方案已拟定，等待实施",
+      value: "实施后可缓解当前的性能压力",
+    },
   },
   REFACTOR: {
-    done: "已经重构完了，代码结构清爽多了。",
-    doing: "正在重构，主体已经改完了。",
-    todo: "准备重构，先把结构理清楚。",
+    done: {
+      progress: "结构调整已收尾，模块划分更清晰，原有功能保持正常",
+      value: "后续修改与排查的成本降低，便于长期维护",
+    },
+    in_progress: {
+      progress: "结构调整已开始，尚未全部完成，原有功能保持正常",
+      value: "完成后可降低后续维护与排查成本",
+    },
+    todo: {
+      progress: "调整方案已确定，等待实施",
+      value: "实施后结构更清晰，便于后续维护",
+    },
   },
   DOCS: {
-    done: "文档已经写好了，内容齐全。",
-    doing: "正在写文档，主体已经差不多了。",
-    todo: "准备写文档，先整理资料。",
+    done: {
+      progress: "文档已编写完成并归档，覆盖操作步骤与常见问题",
+      value: "团队成员可直接查阅，减少重复沟通",
+    },
+    in_progress: {
+      progress: "主体内容已具备，细节仍在校对",
+      value: "完成后可供团队查阅与交接使用",
+    },
+    todo: {
+      progress: "相关资料已收集，等待开始编写",
+      value: "完成后便于交接与查阅",
+    },
   },
   TEST: {
-    done: "已经测试完了，结果都正常。",
-    doing: "正在测试，主要场景已经跑过了。",
-    todo: "准备测试，先把用例列出来。",
+    done: {
+      progress: "测试已执行完毕，覆盖主要业务场景，结果符合预期",
+      value: "上线风险可控，交付质量有据可依",
+    },
+    in_progress: {
+      progress: "主要场景已覆盖，剩余场景仍在补充",
+      value: "完成后可确认本次改动的交付质量",
+    },
+    todo: {
+      progress: "测试用例已列出，等待执行",
+      value: "执行后可提前发现并处理潜在问题",
+    },
   },
   OTHER: {
-    done: "已经干完了，结果没问题。",
-    doing: "正在干，进展顺利。",
-    todo: "准备开工，按计划推进。",
+    done: {
+      progress: "该项工作已按计划收尾，结果与预期一致",
+      value: "为后续工作提供了可继续推进的基础",
+    },
+    in_progress: {
+      progress: "该项工作已开始，尚未全部完成",
+      value: "按当前进度可继续推进至收尾",
+    },
+    todo: {
+      progress: "该项工作已列入本周期计划，等待排期",
+      value: "将按计划推进并跟进结果",
+    },
   },
 };
 
-/** 把任务名称自动转化成大白话描述 */
-export function generatePlainDescription(
-  title: string,
-  status: ReportStatus,
-  category: string,
-): string {
-  const phrases = PLAIN_PHRASES[category] ?? PLAIN_PHRASES.OTHER;
-  const tail =
-    status === "done"
-      ? phrases.done
-      : status === "in_progress"
-        ? phrases.doing
-        : phrases.todo;
-  return `「${title}」${tail}`;
+function phraseFor(category: string, status: ReportStatus): DescPhrase {
+  const table = DESCRIPTION_PHRASES[category] ?? DESCRIPTION_PHRASES.OTHER;
+  return table[status];
 }
 
-/** 有结果导向的大白话：按分类 + 状态生成“对公司有什么好处”的描述（AI 不可用时的兜底） */
-const RESULT_PHRASES: Record<
-  string,
-  { done: string; doing: string; todo: string }
-> = {
-  BUG: {
-    done: "已修复完成，问题解决，功能恢复正常，减少客户使用故障。",
-    doing: "正在修复，问题已定位，修复后可避免影响客户使用。",
-    todo: "待修复，已记录问题，修复后可保障功能稳定。",
-  },
-  FEAT: {
-    done: "已开发完成，功能可正常使用，帮助公司提升效率。",
-    doing: "开发中，核心功能已完成大半，上线后能为公司带来新能力。",
-    todo: "待开发，需求已明确，开发完成后可满足业务需要。",
-  },
-  OPTIMIZE: {
-    done: "已完成优化，速度明显提升，提高工作效率。",
-    doing: "优化中，效果已初步显现，完成后能更快响应。",
-    todo: "待优化，已定位瓶颈，优化后可提升整体性能。",
-  },
-  REFACTOR: {
-    done: "已重构完成，结构更清晰，后续维护成本更低。",
-    doing: "重构中，主体结构已完成，完成后更好维护。",
-    todo: "待重构，方案已定，重构后可降低维护成本。",
-  },
-  DOCS: {
-    done: "已完成，文档内容齐全，方便团队查阅，减少沟通成本。",
-    doing: "编写中，主体内容已完成，完成后团队可直接参考。",
-    todo: "待编写，资料已整理，完成后便于交接和查阅。",
-  },
-  TEST: {
-    done: "已完成测试，结果正常，降低上线风险。",
-    doing: "测试中，核心场景已跑通，可降低上线风险。",
-    todo: "待测试，用例已备好，执行后保障交付质量。",
-  },
-  OTHER: {
-    done: "已完成，结果符合预期，工作顺利推进。",
-    doing: "进行中，进展顺利，按计划推进。",
-    todo: "待开始，已列入计划，将按计划推进。",
-  },
-};
+/** 客观依据：所属空间、时间、负责人；缺哪项就不写，不臆测 */
+function buildDetailClause(
+  status: ReportStatus,
+  ctx: DescriptionContext,
+): string {
+  const parts: string[] = [];
+  const spaceName = ctx.spaceName?.trim();
+  if (spaceName) parts.push(`所属空间为${spaceName}`);
 
-/** 由任务名称自动生成有结果导向的大白话描述 */
+  const timeLabel = ctx.timeLabel?.trim() ?? "";
+  if (status === "done") {
+    const completed = ctx.completedLabel?.trim();
+    if (completed) parts.push(`完成时间为 ${completed}`);
+    else if (timeLabel.startsWith("完成于")) {
+      parts.push(`完成时间为 ${timeLabel.slice(4).trim()}`);
+    }
+  } else if (timeLabel && timeLabel !== "待排期") {
+    parts.push(`安排时间为 ${timeLabel}`);
+  } else {
+    parts.push("尚未安排具体时间");
+  }
+
+  const assignees = (ctx.assignees ?? []).filter(Boolean);
+  if (assignees.length > 0) parts.push(`由${assignees.join("、")}负责`);
+
+  return parts.length > 0 ? `${parts.join("，")}。` : "";
+}
+
+/**
+ * 一句话版本（Excel「任务」列等独立单元格使用）：
+ * 「任务名」状态，做到什么程度；结果与作用。
+ */
 export function generateResultDescription(
   title: string,
   status: ReportStatus,
   category: string,
 ): string {
-  const phrases = RESULT_PHRASES[category] ?? RESULT_PHRASES.OTHER;
-  const tail =
-    status === "done"
-      ? phrases.done
-      : status === "in_progress"
-        ? phrases.doing
-        : phrases.todo;
-  return `「${title}」${tail}`;
+  const { progress, value } = phraseFor(category, status);
+  return `「${title}」${STATUS_WORD[status]}，${progress}；${value}。`;
 }
 
-/** 开拓隆海 logo 主色（青色系） */
+/** 兼容旧调用的别名，与 generateResultDescription 同义 */
+export function generatePlainDescription(
+  title: string,
+  status: ReportStatus,
+  category: string,
+): string {
+  return generateResultDescription(title, status, category);
+}
+
+/**
+ * 详细版本（报告正文与 Excel「描述」列使用，标题在同行单独展示，不再重复）：
+ * 状态 + 做到什么程度 + 结果与作用，末尾补充空间、时间、负责人等客观依据。
+ */
+export function generateTaskDescription(
+  _title: string,
+  status: ReportStatus,
+  category: string,
+  ctx: DescriptionContext = {},
+): string {
+  const { progress, value } = phraseFor(category, status);
+  const detail = buildDetailClause(status, ctx);
+  return `${STATUS_WORD[status]}，${progress}；${value}。${detail}`;
+}
+
+/** 开拓隆海 logo 主色（青色系），供 Excel 导出使用 */
 const LOGO_CYAN = "#007080";
 const LOGO_CYAN_DARK = "#005663";
 const LOGO_CYAN_TITLE_BG = "#DFEEF0";
 const LOGO_CYAN_ZEBRA = "#EFF6F7";
 const LOGO_CYAN_BORDER = "#C9DDE0";
-
-/** 动作关键词：配置 / 集成 / 修复 / 实现 / 优化 / 迁移重构 */
-const ACTION_KEYWORDS: Array<{ re: RegExp; label: string }> = [
-  { re: /配置|部署|安装|设置|config/i, label: "配置" },
-  { re: /集成|对接|接入|integrat/i, label: "集成" },
-  { re: /修复|bug|缺陷|fix/i, label: "修复" },
-  { re: /实现|开发|新增|搭建|创建|编写|feat|feature/i, label: "实现" },
-  { re: /优化|性能|提升|改善|optimiz/i, label: "优化" },
-  { re: /迁移|重构|升级|改造|refactor/i, label: "迁移重构" },
-];
-
-/** 对象关键词：数据库 / 表结构 / 接口 / 服务 / 脚本 / 文件 */
-const OBJECT_KEYWORDS: Array<{ re: RegExp; label: string }> = [
-  { re: /数据库|data\s*base/i, label: "数据库" },
-  { re: /表结构/i, label: "表结构" },
-  { re: /接口|api/i, label: "接口" },
-  { re: /服务|service/i, label: "服务" },
-  { re: /脚本|script/i, label: "脚本" },
-  { re: /文件|file/i, label: "文件" },
-];
-
-/** 目标句式：解决..的问题 / 实现..功能 / 满足..需求 / 支持..功能 */
-const GOAL_PATTERNS: Array<{
-  re: RegExp;
-  build: (m: RegExpExecArray) => string;
-}> = [
-  {
-    re: /解决([^，。；;]+?)(?:的)?问题/i,
-    build: (m) => `解决${m[1]}问题`,
-  },
-  {
-    re: /实现([^，。；;]+?)功能/i,
-    build: (m) => `实现${m[1]}功能`,
-  },
-  {
-    re: /满足([^，。；;]+?)需求/i,
-    build: (m) => `满足${m[1]}需求`,
-  },
-  {
-    re: /支持([^，。；;]+?)功能/i,
-    build: (m) => `支持${m[1]}功能`,
-  },
-];
-
-/** 未命中任务名目标句式时，按分类 + 状态给出兜底目标 */
-const GOAL_BY_CATEGORY: Record<
-  string,
-  { done: string; doing: string; todo: string }
-> = {
-  BUG: {
-    done: "问题已解决，回归验证通过，功能恢复正常。",
-    doing: "已定位问题原因，正在修复中。",
-    todo: "将复现并定位问题，制定修复方案。",
-  },
-  FEAT: {
-    done: "功能已实现并验证通过，满足预期需求。",
-    doing: "核心逻辑已实现，正在完善细节。",
-    todo: "将完成需求分析与设计后进入开发。",
-  },
-  OPTIMIZE: {
-    done: "性能与效率明显提升，验证通过。",
-    doing: "部分指标已改善，持续优化中。",
-    todo: "将分析瓶颈并制定优化方案。",
-  },
-  REFACTOR: {
-    done: "代码结构更清晰，可维护性提升。",
-    doing: "核心模块已调整，持续重构中。",
-    todo: "将梳理结构并制定重构方案。",
-  },
-  DOCS: {
-    done: "内容完整、结构清晰，已发布供团队查阅。",
-    doing: "主体内容已完成，正在补充细节。",
-    todo: "将整理资料并编写完整文档。",
-  },
-  TEST: {
-    done: "用例覆盖关键场景，结果符合预期。",
-    doing: "核心场景已覆盖，持续推进中。",
-    todo: "将设计并执行测试用例，覆盖关键场景。",
-  },
-  OTHER: {
-    done: "相关工作已完成并跟进收尾。",
-    doing: "整体进展顺利，持续推进中。",
-    todo: "将按计划推进相关工作并及时跟进。",
-  },
-};
-
-function detectAction(title: string): string | null {
-  for (const item of ACTION_KEYWORDS) {
-    if (item.re.test(title)) return item.label;
-  }
-  return null;
-}
-
-function detectObject(title: string): string | null {
-  for (const item of OBJECT_KEYWORDS) {
-    if (item.re.test(title)) return item.label;
-  }
-  return null;
-}
-
-function detectTitleGoal(title: string): string | null {
-  for (const item of GOAL_PATTERNS) {
-    const m = item.re.exec(title);
-    if (m) return item.build(m);
-  }
-  return null;
-}
-
-const CATEGORY_ACTION: Record<string, string> = {
-  BUG: "修复",
-  FEAT: "实现",
-  OPTIMIZE: "优化",
-  REFACTOR: "迁移重构",
-  DOCS: "实现",
-  TEST: "实现",
-  OTHER: "实现",
-};
-
-/**
- * 依据项目文档 supabase/services/api/描述关键词 的关键词体系：
- * 一、核心关键词分类
- *   1. 动作与目的：生成 / 自动化 / 处理 / 交付
- *   2. 对象与范围：报表类型 / 数据内容 / 数据来源 / 输出格式
- *   3. 质量与标准：格式要求 / 准确性 / 性能 / 易用性
- * 二、关键词组合公式：
- *   [动作/目的] + [自动化特征] + [目标报表类型] + [数据来源与处理] + [输出标准与格式]
- */
-const DOC_ACTION_WORDS: Array<{ label: string; words: string[] }> = [
-  {
-    label: "生成",
-    words: ["生成", "导出", "输出", "创建", "制作"],
-  },
-  {
-    label: "自动化",
-    words: ["自动生成", "自动化流程", "定时任务", "触发式生成", "动态更新"],
-  },
-  {
-    label: "处理",
-    words: ["汇总", "统计", "分析", "计算", "清洗", "合并"],
-  },
-  {
-    label: "交付",
-    words: ["推送", "分发", "存档", "展示", "可视化"],
-  },
-];
-
-const DOC_OBJECT_WORDS: Array<{ label: string; words: string[] }> = [
-  {
-    label: "报表类型",
-    words: ["日报", "周报", "月报", "数据看板", "运营报表", "生产报表"],
-  },
-  {
-    label: "数据内容",
-    words: [
-      "生产进度",
-      "缺料分析",
-      "销售数据",
-      "项目里程碑",
-      "任务完成率",
-      "关键指标",
-      "KPI",
-    ],
-  },
-  {
-    label: "数据来源",
-    words: ["Supabase", "MySQL", "数据库", "API", "接口"],
-  },
-  {
-    label: "输出格式",
-    words: ["Excel", ".xlsx", "工作簿", "图表", "数据透视表", "打印格式", "Sheet"],
-  },
-];
-
-const DOC_QUALITY_WORDS: Array<{ label: string; words: string[] }> = [
-  {
-    label: "格式要求",
-    words: ["单元格格式", "条件格式", "高亮", "字体", "颜色", "列宽", "Logo"],
-  },
-  {
-    label: "准确性",
-    words: ["数据准确", "实时同步", "历史数据", "数据校验"],
-  },
-  {
-    label: "性能",
-    words: ["生成速度", "大数据量", "超时"],
-  },
-  {
-    label: "易用性",
-    words: ["一键生成", "自动归档", "下载", "邮件"],
-  },
-];
-
-/** 质量关键词 → 描述短语 */
-const QUALITY_PHRASES: Record<string, string> = {
-  单元格格式: "单元格格式规范",
-  条件格式: "含条件格式高亮异常值",
-  高亮: "高亮异常值",
-  字体: "字体/颜色规范",
-  颜色: "字体/颜色规范",
-  列宽: "列宽自适应",
-  Logo: "带公司 Logo",
-  数据准确: "数据准确",
-  实时同步: "实时同步",
-  历史数据: "历史数据可追溯",
-  数据校验: "支持数据校验",
-  生成速度: "生成速度快",
-  大数据量: "支持大数据量",
-  超时: "不超时",
-  一键生成: "支持一键生成",
-  自动归档: "自动归档命名",
-  下载: "支持下载",
-  邮件: "支持邮件发送",
-};
-
-/** 输出格式关键词 → 描述短语 */
-const OUTPUT_FORMAT_PHRASES: Record<string, string> = {
-  Excel: "Excel 工作簿",
-  ".xlsx": ".xlsx 文件",
-  工作簿: "Excel 工作簿",
-  图表: "包含图表",
-  数据透视表: "包含数据透视表",
-  打印格式: "预设打印格式",
-  Sheet: "多个 Sheet",
-};
-
-function findDocKeywordHits(title: string): {
-  actions: string[];
-  automation: string[];
-  reportTypes: string[];
-  dataContents: string[];
-  dataSources: string[];
-  outputFormats: string[];
-  quality: string[];
-} {
-  const buckets: Record<
-    "actions" | "automation" | "reportTypes" | "dataContents" | "dataSources" | "outputFormats" | "quality",
-    Array<{ word: string; pos: number }>
-  > = {
-    actions: [],
-    automation: [],
-    reportTypes: [],
-    dataContents: [],
-    dataSources: [],
-    outputFormats: [],
-    quality: [],
-  };
-  const lower = title.toLowerCase();
-  const scan = (
-    bucket: keyof typeof buckets,
-    words: string[],
-  ) => {
-    for (const w of words) {
-      const pos = lower.indexOf(w.toLowerCase());
-      if (pos >= 0) buckets[bucket].push({ word: w, pos });
-    }
-  };
-  for (const item of DOC_ACTION_WORDS) {
-    scan(
-      item.label === "自动化" ? "automation" : "actions",
-      item.words,
-    );
-  }
-  for (const item of DOC_OBJECT_WORDS) {
-    const bucket =
-      item.label === "报表类型"
-        ? "reportTypes"
-        : item.label === "数据内容"
-          ? "dataContents"
-          : item.label === "数据来源"
-            ? "dataSources"
-            : "outputFormats";
-    scan(bucket, item.words);
-  }
-  for (const item of DOC_QUALITY_WORDS) {
-    scan("quality", item.words);
-  }
-  const hits = {
-    actions: [] as string[],
-    automation: [] as string[],
-    reportTypes: [] as string[],
-    dataContents: [] as string[],
-    dataSources: [] as string[],
-    outputFormats: [] as string[],
-    quality: [] as string[],
-  };
-  for (const key of Object.keys(buckets) as Array<keyof typeof buckets>) {
-    buckets[key].sort((a, b) => a.pos - b.pos);
-    hits[key] = buckets[key].map((f) => f.word);
-  }
-  return hits;
-}
-
-/** 按文档公式组合描述：[动作/目的] + [自动化特征] + [目标报表类型] + [数据来源与处理] + [输出标准与格式] */
-function composeDocDescription(
-  status: ReportStatus,
-  hits: ReturnType<typeof findDocKeywordHits>,
-): string {
-  const verb =
-    status === "done" ? "完成" : status === "in_progress" ? "正在" : "计划";
-  const automation = hits.automation[0] ?? "";
-  // 自动化词已含动作时（如“自动生成”），不再重复拼接“生成”
-  const actionCandidates = automation
-    ? hits.actions.filter(
-        (a) => !automation.toLowerCase().includes(a.toLowerCase()),
-      )
-    : hits.actions;
-  const action = actionCandidates[0] ?? (automation ? "" : "生成");
-  const reportType = hits.reportTypes[0] ?? "报表";
-  const dataContent = hits.dataContents[0] ?? "";
-  const target = dataContent ? `${dataContent}${reportType}` : reportType;
-  const sourceWord = hits.dataSources[0] ?? "";
-  const dataSource = sourceWord
-    ? `通过 ${sourceWord} 获取数据`
-    : "从系统数据中整理";
-  const formatWord = hits.outputFormats[0] ?? "";
-  const formatPhrase = formatWord
-    ? OUTPUT_FORMAT_PHRASES[formatWord] ?? formatWord
-    : "Excel 工作簿";
-  const outputPart = /^(包含|预设)/.test(formatPhrase)
-    ? formatPhrase
-    : `输出为 ${formatPhrase}`;
-  const quality =
-    hits.quality.length > 0
-      ? hits.quality
-          .map((w) => QUALITY_PHRASES[w] ?? w)
-          .join("、")
-      : "格式规范、数据准确";
-  return `${verb}${automation}${action}${target}，${dataSource}，${outputPart}，${quality}。`;
-}
-
-/**
- * 按「动作 + 对象 + 约束/目标」的结构，根据任务名称自动生成完整描述。
- * 动作：配置 / 集成 / 修复 / 实现 / 优化 / 迁移重构；
- * 对象：数据库 / 表结构 / 接口 / 服务 / 脚本 / 文件；
- * 目标：解决..的问题、实现..功能、满足..需求、支持..功能。
- * 任务名命中《描述关键词》文档中的报表类关键词时，优先按文档公式生成。
- */
-export function generateTaskDescription(
-  title: string,
-  status: ReportStatus,
-  category: string,
-): string {
-  const hits = findDocKeywordHits(title);
-  const hasReportContext =
-    hits.reportTypes.length > 0 ||
-    hits.outputFormats.length > 0 ||
-    hits.dataContents.length > 0 ||
-    hits.automation.length > 0 ||
-    hits.actions.length > 0;
-  if (hasReportContext) {
-    return composeDocDescription(status, hits);
-  }
-
-  const phase =
-    status === "done" ? "done" : status === "in_progress" ? "doing" : "todo";
-  const action = detectAction(title) ?? CATEGORY_ACTION[category] ?? "实现";
-  const object = detectObject(title) ?? "相关功能";
-  const goal =
-    detectTitleGoal(title) ??
-    GOAL_BY_CATEGORY[category]?.[phase] ??
-    "结果符合预期。";
-  const verb =
-    status === "done"
-      ? "完成"
-      : status === "in_progress"
-        ? "正在进行"
-        : "计划开展";
-  return `针对任务“${title}”，${verb}对${object}的${action}：${goal}`;
-}
 
 export type ReportTask = {
   id: string;
@@ -556,8 +278,6 @@ export type ReportTask = {
   status: ReportStatus;
   space_id: string;
   space_name: string;
-  /** 任务部门；未设置时为「通用」 */
-  department: string;
   /** 分类：按任务名称关键字，如 BUG / FEAT / OPTIMIZE / OTHER */
   category: string;
   /** 展示用时间，如 8/12 10:00~11:00、全天 8/12、完成于 8/12 */
@@ -981,17 +701,33 @@ export function buildReportData(args: {
   todos: TodoRow[];
   canAssignBySpace: Record<string, boolean>;
   userId: string;
+  /** 为 true 时只保留指派给我的任务（个人周报）；false 时保留 owner/admin 的整空间团队视图 */
+  mineOnly: boolean;
 }): ReportData {
-  const { type, range, selectedSpaces, todos, canAssignBySpace, userId } = args;
+  const {
+    type,
+    range,
+    selectedSpaces,
+    todos,
+    canAssignBySpace,
+    userId,
+    mineOnly,
+  } = args;
   const spaceById = new Map(selectedSpaces.map((s) => [s.id, s]));
   const groups = new Map<string, ReportSpaceGroup>();
 
   for (const todo of todos) {
-    const canAssign = canAssignBySpace[todo.space_id] === true;
     const assignedToMe = (todo.todo_assignees ?? []).some(
       (a) => a.user_id === userId,
     );
-    if (!canAssign && !assignedToMe) continue;
+    // 「只看我的任务」开启：无论是否 owner/admin，仅保留指派给我的（无指派人也不显示）。
+    // 关闭：保留原行为——owner/admin 看整个空间（团队周报），普通成员只看指派给我的。
+    if (mineOnly) {
+      if (!assignedToMe) continue;
+    } else {
+      const canAssign = canAssignBySpace[todo.space_id] === true;
+      if (!canAssign && !assignedToMe) continue;
+    }
 
     const space = spaceById.get(todo.space_id);
     const spaceName = space?.name ?? "空间";
@@ -1008,6 +744,10 @@ export function buildReportData(args: {
     }
     const status = todo.status === "done" ? "done" : todo.status === "in_progress" ? "in_progress" : "todo";
     const labels = formatTaskLabels(todo);
+    const category = taskCategory(todo.title);
+    const assignees = (todo.todo_assignees ?? [])
+      .map((a) => a.profiles?.display_name?.trim() || "")
+      .filter(Boolean);
     group.total += 1;
     group.counts[status] += 1;
     group.tasks.push({
@@ -1016,17 +756,16 @@ export function buildReportData(args: {
       description: todo.description,
       description_display:
         todo.description?.trim() ||
-        generateTaskDescription(
-          todo.title,
-          status,
-          taskCategory(todo.title),
-        ),
+        generateTaskDescription(todo.title, status, category, {
+          spaceName,
+          timeLabel: labels.time_label,
+          assignees,
+        }),
       priority: todo.priority,
       status,
       space_id: todo.space_id,
       space_name: spaceName,
-      department: todo.department || "通用",
-      category: taskCategory(todo.title),
+      category,
       time_label: labels.time_label,
       report_date_label: labels.report_date_label,
       date_iso: labels.date_iso,
@@ -1040,9 +779,7 @@ export function buildReportData(args: {
             ? "进行中"
             : "未开始",
       issue_label: "暂无",
-      assignees: (todo.todo_assignees ?? [])
-        .map((a) => a.profiles?.display_name?.trim() || "")
-        .filter(Boolean),
+      assignees,
     });
   }
 
@@ -1233,7 +970,7 @@ export function buildReportXlsxXml(
   const dataRow = (cells: string[]) => `<Row ss:Height="20">${cells.join("")}</Row>`;
   const headerRow = (headers: string[]) =>
     `<Row ss:Height="24">${headers.map(headCell).join("")}</Row>`;
-  // 任务栏统一用大白话：优先 AI 改写，缺失时按任务名称规则生成
+  // 任务栏统一口径：优先 AI 改写，缺失时按任务名称规则生成严谨描述
   const plainLabel = (task: ReportTask) =>
     taskPlainText[task.id] ||
     generateResultDescription(task.title, task.status, task.category);
@@ -1261,7 +998,7 @@ export function buildReportXlsxXml(
         textCell(categoryLabel(task.category), z ? "ZebraCenter" : "Center"),
         textCell(formatDayLabel(task.date_iso), z ? "ZebraCenter" : "Center"),
         linkCell(
-          plainLabel(task),
+          task.title,
           `#任务明细!A${detailRow}`,
           z ? "ZebraLink" : "Link",
         ),

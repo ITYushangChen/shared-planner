@@ -208,9 +208,8 @@ export async function buildReportXlsx(
     });
   };
 
-  const summaryHeader = ["部门", "分类", "日期", "任务"];
+  const summaryHeader = ["分类", "日期", "任务"];
   const detailHeader = [
-    "部门",
     "分类",
     "日期",
     "任务",
@@ -220,7 +219,7 @@ export async function buildReportXlsx(
     "状态",
     "描述",
   ];
-  const planHeader = ["部门", "分类", "日期", "任务", "描述"];
+  const planHeader = ["分类", "日期", "任务", "描述"];
 
   addSheet(
     "报告汇总",
@@ -228,7 +227,6 @@ export async function buildReportXlsx(
     summaryHeader,
     [20, 15, 13, 53],
     tasks.map((task, idx) => [
-      { text: task.department || "通用", kind: idx % 2 ? "zebraCenter" : "center" },
       {
         text: categoryLabel(task.category),
         kind: idx % 2 ? "zebraCenter" : "center",
@@ -253,7 +251,6 @@ export async function buildReportXlsx(
     tasks.map((task, idx) => {
       const z = idx % 2 === 1;
       return [
-        { text: task.department || "通用", kind: z ? "zebraCenter" : "center" },
         { text: categoryLabel(task.category), kind: z ? "zebraCenter" : "center" },
         { text: formatDayLabel(task.date_iso), kind: z ? "zebraCenter" : "center" },
         { text: plainLabel(task), kind: z ? "zebra" : "cell" },
@@ -277,7 +274,6 @@ export async function buildReportXlsx(
     planTasks.map((task, idx) => {
       const z = idx % 2 === 1;
       return [
-        { text: task.department || "通用", kind: z ? "zebraCenter" : "center" },
         { text: categoryLabel(task.category), kind: z ? "zebraCenter" : "center" },
         { text: formatDayLabel(task.date_iso), kind: z ? "zebraCenter" : "center" },
         { text: plainLabel(task), kind: z ? "zebra" : "cell" },

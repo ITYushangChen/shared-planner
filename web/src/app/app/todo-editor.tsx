@@ -12,11 +12,11 @@ import { suppressTodosRealtimeRefresh } from "@/lib/todos-realtime-gate";
 import { mapDbError, mapDbErrorWith } from "@/lib/error-map";
 import {
   allDayRangeToIso,
+  RECUR_OPTIONS,
   type SpaceMemberOption,
   type TodoRow,
 } from "@/lib/todos";
 import { resolveTodoColor } from "@/lib/ui-prefs";
-import { DEFAULT_DEPARTMENT, DEPARTMENT_OPTIONS } from "@/lib/departments";
 import { TodoComments } from "./todo-comments";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
 import { Modal } from "./ui-modal";
@@ -60,10 +60,8 @@ export function TodoEditor({
   const [description, setDescription] = useState(todo.description ?? "");
   const [priority, setPriority] = useState(todo.priority);
   const [color, setColor] = useState(todo.color ?? "");
-  const [department, setDepartment] = useState(
-    todo.department ?? DEFAULT_DEPARTMENT,
-  );
   const [status, setStatus] = useState(todo.status);
+  const [rrule, setRrule] = useState(todo.rrule ?? "");
   const previewColor = resolveTodoColor(
     color.trim() || null,
     priority,
@@ -87,8 +85,8 @@ export function TodoEditor({
     setDescription(todo.description ?? "");
     setPriority(todo.priority);
     setColor(todo.color ?? "");
-    setDepartment(todo.department ?? DEFAULT_DEPARTMENT);
     setStatus(todo.status);
+    setRrule(todo.rrule ?? "");
     setIsAllDay(todo.is_all_day);
     setStartLocal(toLocalInput(todo.start_at));
     setEndLocal(toLocalInput(todo.end_at));
@@ -191,11 +189,11 @@ export function TodoEditor({
       priority,
       color: color.trim() || null,
       status,
-      department,
       is_all_day: isAllDay,
       start_at,
       end_at,
       duration_minutes,
+      rrule: rrule.trim() || null,
     };
 
     if (status === "done") {
@@ -258,13 +256,20 @@ export function TodoEditor({
       priority,
       color: color.trim() || null,
       status,
-      department,
       is_all_day: isAllDay,
       start_at,
       end_at,
       duration_minutes,
+      rrule: rrule.trim() || null,
       todo_assignees: canAssign
-        ? assigneeIds.map((user_id) => ({ user_id }))
+        ? assigneeIds.map((user_id) => ({
+            user_id,
+            profiles: {
+              display_name:
+                members.find((m) => m.user_id === user_id)?.display_name ?? "",
+              email: null,
+            },
+          }))
         : todo.todo_assignees,
     };
     suppressTodosRealtimeRefresh(6000);
@@ -323,7 +328,6 @@ export function TodoEditor({
         title: `${title.trim() || todo.title}（段${i + 1}）`,
         description: description.trim() || todo.description,
         priority,
-        department: todo.department ?? DEFAULT_DEPARTMENT,
         status: "todo",
         start_at: segStart.toISOString(),
         end_at: segEnd.toISOString(),
@@ -536,17 +540,20 @@ export function TodoEditor({
           </div>
 
           <label className="text-sm text-zinc-700">
-            部门
+            重复
             <select
               className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
+              value={rrule}
+              onChange={(e) => setRrule(e.target.value)}
             >
-              {DEPARTMENT_OPTIONS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
+              {RECUR_OPTIONS.map((o) => (
+                <option key={o.value || "none"} value={o.value}>
+                  {o.label}
                 </option>
               ))}
+              {rrule && !RECUR_OPTIONS.some((o) => o.value === rrule) ? (
+                <option value={rrule}>自定义（{rrule}）</option>
+              ) : null}
             </select>
           </label>
 
@@ -661,7 +668,10 @@ export function TodoEditor({
           )}
 
           {canAssign ? (
-            <fieldset className="rounded-lg border border-zinc-200 p-3">
+            <fieldset
+              data-testid="todo-editor-assignees"
+              className="rounded-lg border border-zinc-200 p-3"
+            >
               <legend className="px-1 text-sm text-zinc-700">指派人</legend>
               <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
                 {members.length === 0 ? (
@@ -674,6 +684,7 @@ export function TodoEditor({
                     >
                       <input
                         type="checkbox"
+                        data-testid={"todo-assignee-" + m.user_id}
                         checked={assigneeIds.includes(m.user_id)}
                         onChange={() => toggleAssignee(m.user_id)}
                       />
@@ -737,6 +748,7 @@ export function TodoEditor({
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
+              data-testid="todo-editor-save"
               disabled={loading}
               className="rounded-xl bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-50"
             >

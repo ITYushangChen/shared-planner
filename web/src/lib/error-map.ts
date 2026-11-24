@@ -16,7 +16,7 @@ const RULES: Array<{ test: RegExp; text: string }> = [
   { test: /null value in column|violates not-null/i, text: "必填信息未填写完整" },
   { test: /violates foreign key|foreign key constraint/i, text: "关联数据不存在，请刷新页面后重试" },
   { test: /violates check constraint/i, text: "数据不符合要求，请检查后重试" },
-  { test: /failed to fetch|network|networkerror|fetcherror|load failed/i, text: "网络连接失败，请检查网络后重试" },
+  { test: /failed to fetch|fetch failed|network|networkerror|fetcherror|load failed/i, text: "网络连接失败，请检查网络后重试" },
   { test: /timeout|timed out/i, text: "请求超时，请稍后重试" },
   { test: /bucket not found|storage/i, text: "文件存储不可用，请联系管理员" },
   { test: /rate limit|too many requests/i, text: "操作过于频繁，请稍后再试" },

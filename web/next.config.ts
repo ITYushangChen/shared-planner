@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+// dev 环境 Next 的 chunk 走 eval-source-map，没有 'unsafe-eval' 浏览器会直接拒绝执行，
+// 导致 React 不水合（表现为「页面能看但点了没反应、useEffect 不跑」）。生产构建不含 eval。
+const isDev = process.env.NODE_ENV !== "production";
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // 允许局域网 IP / Cloudflare 隧道在开发模式下加载 /_next 资源
@@ -44,7 +48,10 @@ const nextConfig: NextConfig = {
               // 内联样式：Tailwind 与 FullCalendar 运行时注入 <style>，必须放行
               "style-src 'self' 'unsafe-inline'",
               // Next 需要内联启动脚本；AI/图表等未引入外部脚本，不放 unsafe-eval
-              "script-src 'self' 'unsafe-inline'",
+              // （dev 例外：eval-source-map 需要 unsafe-eval，否则完全不水合）
+              isDev
+                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+                : "script-src 'self' 'unsafe-inline'",
               // 头像可以是任意 https 地址，也允许 data: 预览
               "img-src 'self' data: https: blob:",
               // 同源 /supabase 反代 + 后端 API

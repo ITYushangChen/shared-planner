@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -24,11 +24,14 @@ import {
 } from "@/lib/todo-schedule-events";
 import {
   TODO_SELECT_LEAN,
+  canViewerSeeTodo,
   isAssignedToUser,
   type SpaceMemberOption,
   type SpaceNavItem,
   type TodoRow,
 } from "@/lib/todos";
+import { useWatchSpaceMembers } from "@/lib/use-watch-space-members";
+import { TODOS_REALTIME_CHANGED, TODOS_REALTIME_DELETED } from "@/lib/use-todos-realtime";
 
 const UnscheduledList = dynamic(
   () =>
@@ -121,13 +124,15 @@ export function SidebarUnscheduled({ spaces }: Props) {
     });
   }, []);
 
-  useEffect(() => {
+  const fetchTokenRef = useRef(0);
+
+  const loadScopeTodos = useCallback(() => {
     if (!scopeKey) {
       setTodos((prev) => (prev.length === 0 ? prev : []));
       return;
     }
+    const token = ++fetchTokenRef.current;
     const ids = scopeKey.split(",");
-    let cancelled = false;
     const supabase = createClient();
     const roleBySpace = Object.fromEntries(
       canAssignKey.split(",").filter(Boolean).map((part) => {
@@ -141,16 +146,16 @@ export function SidebarUnscheduled({ spaces }: Props) {
         const sid = ids[0]!;
         const canAssign = !!roleBySpace[sid];
         const cached = getCachedSpaceTodos(sid);
-        if (cached) {
+        if (cached && token === fetchTokenRef.current) {
           const filtered = filterTodosForViewer(
             cached,
             canAssign,
             currentUserId ?? undefined,
           );
-          if (!cancelled) setTodos(filtered.unscheduled);
+          setTodos(filtered.unscheduled);
         }
         const data = await loadSpaceCalendarTodos(sid);
-        if (cancelled) return;
+        if (token !== fetchTokenRef.current) return;
         const filtered = filterTodosForViewer(
           data,
           canAssign,
@@ -168,38 +173,61 @@ export function SidebarUnscheduled({ spaces }: Props) {
         .is("start_at", null)
         .order("created_at", { ascending: false })
         .limit(UNSCHEDULED_LIMIT);
-      if (cancelled) return;
+      if (token !== fetchTokenRef.current) return;
       let rows = (data ?? []) as unknown as TodoRow[];
       if (currentUserId) {
         rows = rows.filter((t) => {
           if (roleBySpace[t.space_id]) return true;
-          return isAssignedToUser(t, currentUserId);
+          return canViewerSeeTodo(t, {
+            currentUserId,
+            isOwnerOrAdmin: false,
+          });
         });
       }
       setTodos(rows);
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [scopeKey, currentUserId, canAssignKey]);
 
   useEffect(() => {
-    if (!scopeKey) {
-      setMembersBySpace((prev) =>
-        Object.keys(prev).length === 0 ? prev : {},
-      );
-      return;
+    loadScopeTodos();
+  }, [loadScopeTodos]);
+
+  // 订阅待办变更（含「别人」新建/修改/指派/删除）：任一变化即重拉，列表实时刷新
+  useEffect(() => {
+    function onRemoteChange() {
+      loadScopeTodos();
     }
+    window.addEventListener(TODOS_REALTIME_CHANGED, onRemoteChange);
+    return () =>
+      window.removeEventListener(TODOS_REALTIME_CHANGED, onRemoteChange);
+  }, [loadScopeTodos]);
+
+  // 订阅远程删除：别人删任务时，精准从本地列表移除，不依赖重拉缓存
+  useEffect(() => {
+    function onRemoteDeleted(ev: Event) {
+      const todoId = (ev as CustomEvent<{ todoId: string }>).detail?.todoId;
+      if (!todoId) return;
+      setTodos((prev) =>
+        prev.some((t) => t.id === todoId)
+          ? prev.filter((t) => t.id !== todoId)
+          : prev,
+      );
+    }
+    window.addEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+    return () =>
+      window.removeEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+  }, []);
+
+  const loadSpaceMembersList = useCallback(() => {
+    if (!scopeKey) return;
     const ids = scopeKey.split(",");
-    let cancelled = false;
     const supabase = createClient();
     void supabase
       .from("space_members")
       .select("user_id, space_id, profiles(display_name, email)")
       .in("space_id", ids)
       .then(({ data }: { data: any[] | null }) => {
-        if (cancelled || !data) return;
+        if (!data) return;
         const map: Record<string, SpaceMemberOption[]> = {};
         for (const row of data) {
           const sid = row.space_id as string;
@@ -216,10 +244,20 @@ export function SidebarUnscheduled({ spaces }: Props) {
         }
         setMembersBySpace(map);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [scopeKey]);
+
+  useEffect(() => {
+    if (!scopeKey) {
+      setMembersBySpace((prev) =>
+        Object.keys(prev).length === 0 ? prev : {},
+      );
+      return;
+    }
+    loadSpaceMembersList();
+  }, [scopeKey, loadSpaceMembersList]);
+
+  // 订阅所关注空间的成员变更：任一成员加入/退出即重拉，避免指派列表陈旧
+  useWatchSpaceMembers(scopeSpaceIds, loadSpaceMembersList);
 
   useEffect(() => {
     const ids = scopeKey ? scopeKey.split(",") : EMPTY_IDS;

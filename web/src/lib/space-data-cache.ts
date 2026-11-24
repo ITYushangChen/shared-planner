@@ -4,6 +4,7 @@
 import { createClient } from "@/lib/supabase/client";
 import {
   TODO_SELECT_LEAN,
+  canViewerSeeTodo,
   isAssignedToUser,
   type SpaceMemberOption,
   type TodoRow,
@@ -66,14 +67,28 @@ export function filterTodosForViewer(
   data: SpaceTodosCache,
   canAssign: boolean,
   currentUserId?: string,
+  onlyAssigned = false,
 ): SpaceTodosCache {
   if (canAssign || !currentUserId) return data;
+  if (onlyAssigned) {
+    // 「我的待办（仅显示指派给我的）」：严格只看指派给我的（含未排期），创建人/空间成员都不算
+    return {
+      scheduled: data.scheduled.filter((t) => isAssignedToUser(t, currentUserId)),
+      unscheduled: data.unscheduled.filter((t) => isAssignedToUser(t, currentUserId)),
+    };
+  }
   return {
     scheduled: data.scheduled.filter((t) =>
-      isAssignedToUser(t, currentUserId),
+      canViewerSeeTodo(t, {
+        currentUserId,
+        isOwnerOrAdmin: false,
+      }),
     ),
     unscheduled: data.unscheduled.filter((t) =>
-      isAssignedToUser(t, currentUserId),
+      canViewerSeeTodo(t, {
+        currentUserId,
+        isOwnerOrAdmin: false,
+      }),
     ),
   };
 }
@@ -394,5 +409,10 @@ export function filterCompletedForViewer(
   currentUserId?: string,
 ): TodoRow[] {
   if (canAssign || !currentUserId) return rows;
-  return rows.filter((t) => isAssignedToUser(t, currentUserId));
+  return rows.filter((t) =>
+    canViewerSeeTodo(t, {
+      currentUserId,
+      isOwnerOrAdmin: false,
+    }),
+  );
 }

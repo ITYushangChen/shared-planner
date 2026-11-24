@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { getAppAuth, getMySpaceNav, visibleSpaceNav } from "@/lib/app-data";
 import {
   TODO_SELECT_LEAN,
+  canViewerSeeTodo,
   getOverviewBounds,
   type OverviewRange,
   type SpaceMemberOption,
@@ -62,8 +63,10 @@ export default async function AppOverviewPage({
   let unscheduled: TodoRow[] = [];
 
   function visibleToUser(t: TodoRow) {
-    if (canAssignBySpace[t.space_id]) return true;
-    return (t.todo_assignees ?? []).some((a) => a.user_id === user!.id);
+    return canViewerSeeTodo(t, {
+      currentUserId: user!.id,
+      isOwnerOrAdmin: !!canAssignBySpace[t.space_id],
+    });
   }
 
   if (view === "calendar") {

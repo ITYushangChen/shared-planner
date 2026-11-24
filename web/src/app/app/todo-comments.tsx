@@ -69,7 +69,10 @@ export function TodoComments({ todoId }: Props) {
   return (
     <div className="rounded-lg border border-zinc-200 p-3">
       <p className="text-sm font-medium text-zinc-700">评论</p>
-      <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+      <ul
+        data-testid="todo-comment-list"
+        className="mt-2 max-h-40 space-y-2 overflow-y-auto"
+      >
         {items.length === 0 ? (
           <li className="text-xs text-zinc-400">暂无评论，记录协作沟通吧</li>
         ) : (
@@ -90,6 +93,7 @@ export function TodoComments({ todoId }: Props) {
       </ul>
       <div className="mt-2 flex gap-2">
         <input
+          data-testid="todo-comment-input"
           className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm"
           placeholder="写一条评论…"
           value={text}
@@ -103,6 +107,7 @@ export function TodoComments({ todoId }: Props) {
         />
         <button
           type="button"
+          data-testid="todo-comment-send"
           disabled={loading || !text.trim()}
           onClick={() => void sendComment()}
           className="rounded-xl bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-50"

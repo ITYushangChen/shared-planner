@@ -21,12 +21,13 @@ export default async function SettingsPage({
   const { data: profile } = await supabase
     .from("profiles")
     .select(
-      "display_name, timezone, email, avatar_url, ui_prefs, notification_prefs",
+      "display_name, timezone, email, avatar_url, ui_prefs, notification_prefs, is_admin",
     )
     .eq("id", user.id)
     .maybeSingle();
 
   const email = user.email ?? profile?.email ?? "";
+  const isAdmin = Boolean(profile?.is_admin);
 
   return (
     <Suspense fallback={null}>
@@ -40,6 +41,7 @@ export default async function SettingsPage({
         spacePrefsByIdRaw={spacePrefsById}
         notificationPrefsRaw={profile?.notification_prefs}
         spaces={spaces}
+        isAdmin={isAdmin}
       />
     </Suspense>
   );

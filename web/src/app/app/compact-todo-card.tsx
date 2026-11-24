@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { TODO_DND_MIME } from "@/lib/quadrant-dnd";
 import {
   PRIORITY_LABEL,
   formatTodoTimeLabel,
   resolveTodoDurationMinutes,
+  rruleLabel,
   type TodoRow,
 } from "@/lib/todos";
 import { resolveTodoColor } from "@/lib/ui-prefs";
@@ -18,13 +19,20 @@ type Props = {
   draggable?: boolean;
   importanceDrag?: boolean;
   onToggleImportance?: () => void;
+  /** 作为拖拽落点：拖到该卡片上时回调，position 表示插入到卡片之前/之后 */
+  onCardDrop?: (e: DragEvent, position: "before" | "after") => void;
   /** 左侧圆圈标记完成 */
   showComplete?: boolean;
   variant?: "list" | "card";
   layout?: "row" | "stack";
   onOpen?: () => void;
   onContextMenu?: (e: MouseEvent) => void;
+  /** E2E 钩子：注入到根元素的 data-testid（如象限卡统一打 "quadrant-todo-card"） */
+  testId?: string;
 };
+
+/** 当前正在被拖拽的任务 id（用于卡片不把自己当作落点） */
+let DRAGGING_TODO_ID: string | null = null;
 
 function subtitleLabel(todo: TodoRow): string {
   return formatTodoTimeLabel(todo);
@@ -36,16 +44,19 @@ export function CompactTodoCard({
   draggable = false,
   importanceDrag = false,
   onToggleImportance,
+  onCardDrop,
   showComplete = false,
   variant = "list",
   layout = "row",
   onOpen,
   onContextMenu,
+  testId,
 }: Props) {
   const supabase = createClient();
   const dragMoved = useRef(false);
   const [toggling, setToggling] = useState(false);
   const [doneOptimistic, setDoneOptimistic] = useState<boolean | null>(null);
+  const [dragEdge, setDragEdge] = useState<"top" | "bottom" | null>(null);
   const uiPrefs = useUiPrefsOptional()?.globalPrefs;
   const accent = conflicted
     ? "#e85d5d"
@@ -55,6 +66,7 @@ export function CompactTodoCard({
   const timeLabel = subtitleLabel(todo);
   const importanceLabel = PRIORITY_LABEL[todo.priority] ?? "不重要";
   const durationMinutes = resolveTodoDurationMinutes(todo);
+  const recurLabel = rruleLabel(todo.rrule);
 
   const isCard = variant === "card";
   const htmlDraggable = importanceDrag || draggable;
@@ -98,7 +110,7 @@ export function CompactTodoCard({
       tabIndex={onOpen ? 0 : undefined}
       draggable={htmlDraggable}
       className={[
-        "group flex w-full items-start gap-2 text-left transition-colors duration-200",
+        "group relative flex w-full items-start gap-2 text-left transition-colors duration-200",
         isCard
           ? "rounded-lg border border-zinc-200 bg-white px-2 py-1.5 hover:bg-zinc-50"
           : "border-b border-zinc-100 bg-white px-2 py-1.5 hover:bg-zinc-50",
@@ -108,7 +120,32 @@ export function CompactTodoCard({
         onOpen && !htmlDraggable ? "cursor-pointer" : "",
         isDone ? "opacity-70" : "",
       ].join(" ")}
+      onDragOver={(e) => {
+        if (!onCardDrop) return;
+        if (DRAGGING_TODO_ID === todo.id) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pos: "top" | "bottom" =
+          e.clientY - rect.top < rect.height / 2 ? "top" : "bottom";
+        setDragEdge(pos);
+      }}
+      onDragLeave={(e) => {
+        if (!onCardDrop) return;
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setDragEdge(null);
+      }}
+      onDrop={(e) => {
+        if (!onCardDrop) return;
+        if (DRAGGING_TODO_ID === todo.id) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const position: "before" | "after" =
+          e.clientY - rect.top < rect.height / 2 ? "before" : "after";
+        setDragEdge(null);
+        onCardDrop(e, position);
+      }}
       data-id={todo.id}
+      data-testid={testId}
       data-title={todo.title}
       data-duration={
         durationMinutes != null ? String(durationMinutes) : undefined
@@ -116,16 +153,35 @@ export function CompactTodoCard({
       onDragStart={(e) => {
         if (!importanceDrag && !draggable) return;
         dragMoved.current = true;
+        DRAGGING_TODO_ID = todo.id;
         e.dataTransfer.setData(TODO_DND_MIME, todo.id);
         e.dataTransfer.setData("text/plain", todo.id);
         e.dataTransfer.effectAllowed = "move";
-        // 隐藏浏览器原生偏影，只留 FullCalendar / 投放目标反馈
-        const img = new Image();
-        img.src =
-          "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-        e.dataTransfer.setDragImage(img, 0, 0);
+        // 用卡片真实快照作拖影，让任务"跟着鼠标走"（而不是透明空白）
+        const node = e.currentTarget as HTMLElement;
+        const clone = node.cloneNode(true) as HTMLElement;
+        Object.assign(clone.style, {
+          position: "fixed",
+          left: "-9999px",
+          top: "-9999px",
+          width: `${node.offsetWidth}px`,
+          opacity: "0.92",
+          pointerEvents: "none",
+          transform: "rotate(1.5deg)",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+        });
+        document.body.appendChild(clone);
+        const rect = node.getBoundingClientRect();
+        e.dataTransfer.setDragImage(
+          clone,
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        // 快照已在 setDragImage 时同步捕获，拖拽开始后移除克隆
+        window.setTimeout(() => clone.remove(), 0);
       }}
       onDragEnd={() => {
+        DRAGGING_TODO_ID = null;
         window.setTimeout(() => {
           dragMoved.current = false;
         }, 0);
@@ -147,6 +203,12 @@ export function CompactTodoCard({
       }}
       onContextMenu={onContextMenu}
     >
+      {dragEdge === "top" ? (
+        <span className="pointer-events-none absolute -top-[3px] left-1 right-1 z-20 h-[3px] rounded-full bg-[var(--brand)]" />
+      ) : null}
+      {dragEdge === "bottom" ? (
+        <span className="pointer-events-none absolute -bottom-[3px] left-1 right-1 z-20 h-[3px] rounded-full bg-[var(--brand)]" />
+      ) : null}
       {showComplete ? (
         <button
           type="button"
@@ -174,6 +236,11 @@ export function CompactTodoCard({
           ].join(" ")}
         >
           {todo.title}
+          {recurLabel ? (
+            <span className="ml-1 inline-flex items-center rounded bg-zinc-100 px-1 py-0.5 align-middle text-[9px] font-medium leading-none text-zinc-500">
+              ⟳ {recurLabel}
+            </span>
+          ) : null}
           {conflicted ? (
             <span className="ml-1 text-[9px] font-medium text-red-600">
               冲突

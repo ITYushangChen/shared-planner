@@ -22,6 +22,7 @@ import {
   type SpaceNavItem,
 } from "@/lib/todos";
 import { plainTaskDescriptions } from "@/lib/ai-api";
+import { createClient } from "@/lib/supabase/client";
 import { chipClass } from "../ui-btn-class";
 
 type Props = {
@@ -36,6 +37,8 @@ type Props = {
   fetchError: string | null;
   /** 任务数量达到查询上限，列表可能不完整 */
   taskLimitReached: boolean;
+  /** 周报「只看我的任务」开关：true=仅显示指派给我的 */
+  mineOnly: boolean;
 };
 
 type SpaceMode = "multi" | "single";
@@ -76,6 +79,7 @@ export function ReportWorkspace({
   backlogSpaces = [],
   fetchError,
   taskLimitReached,
+  mineOnly,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -220,9 +224,27 @@ export function ReportWorkspace({
     if (!filteredData) return;
     setAiBusy(true);
     try {
-      // 接入 AI：把任务名称改写成大白话（失败时自动回退规则生成）
+      // 接入 AI：综合任务名称、描述、协作评价，改写成严谨、具体的任务描述（失败时自动回退规则生成）
       let plainMap: Record<string, string> = {};
       const tasks = filteredData.spaces.flatMap((g) => g.tasks);
+      // 拉取任务的协作评价（评论），作为 AI 写周报的补充依据
+      const commentsMap: Record<string, string[]> = {};
+      try {
+        const supabase = createClient();
+        const ids = tasks.map((t) => t.id);
+        const { data: cmts } = await supabase
+          .from("todo_comments")
+          .select("todo_id, content")
+          .in("todo_id", ids);
+        for (const c of (cmts as Array<{ todo_id: string; content: string }>) ?? []) {
+          const content = c.content?.trim();
+          if (c.todo_id && content) {
+            (commentsMap[c.todo_id] ||= []).push(content);
+          }
+        }
+      } catch {
+        // 拉取评论失败不影响主流程，AI 仅依据名称与描述撰写
+      }
       try {
         const res = await plainTaskDescriptions(
           tasks.map((t) => ({
@@ -230,6 +252,13 @@ export function ReportWorkspace({
             title: t.title,
             status: t.status,
             category: t.category,
+            space_name: t.space_name,
+            time_label: t.time_label,
+            date_iso: t.date_iso,
+            priority: t.priority,
+            description: t.description,
+            assignees: t.assignees,
+            comments: commentsMap[t.id],
           })),
         );
         plainMap = Object.fromEntries(
@@ -349,6 +378,16 @@ export function ReportWorkspace({
               onToggle={toggleSpace}
               onPickSingle={(id) => setSpaces([id])}
             />
+
+            <button
+              type="button"
+              aria-pressed={mineOnly}
+              className={chipClass(mineOnly)}
+              onClick={() => patchQuery({ mine: mineOnly ? "0" : null })}
+              title="只显示指派给我的任务；关闭后可查看整个空间的团队周报"
+            >
+              只看我的任务
+            </button>
 
             <button
               type="button"
@@ -756,9 +795,6 @@ function SpaceReportCard({
                             {task.date_iso
                               ? task.date_iso.slice(5).replace("-", "/")
                               : "待排期"}
-                          </span>
-                          <span className="shrink-0 rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] text-[var(--text-muted)]">
-                            {task.department}
                           </span>
                           {task.assignees.length > 0 ? (
                             <span className="shrink-0 text-xs text-[var(--text-muted)]">

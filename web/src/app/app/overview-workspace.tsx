@@ -23,8 +23,10 @@ import {
   type TodoUnscheduledDetail,
   type TodoUpsertedDetail,
 } from "@/lib/todo-schedule-events";
+import { TODOS_REALTIME_CHANGED, TODOS_REALTIME_DELETED } from "@/lib/use-todos-realtime";
 import {
   TODO_SELECT_LEAN,
+  canViewerSeeTodo,
   getOverviewBounds,
   isAssignedToUser,
   todoOverlapsRange,
@@ -33,11 +35,17 @@ import {
   type SpaceNavItem,
   type TodoRow,
 } from "@/lib/todos";
+import { useWatchSpaceMembers } from "@/lib/use-watch-space-members";
 // 优先首屏：日历/列表/未排期均拆包
 const TodoListPanel = dynamic(
   () =>
     import("./todo-list-panel").then((m) => ({ default: m.TodoListPanel })),
   { loading: () => null },
+);
+const OverviewBoards = dynamic(
+  () =>
+    import("./overview-boards").then((m) => ({ default: m.OverviewBoards })),
+  { ssr: false, loading: () => null },
 );
 const TodosCalendar = dynamic(
   () =>
@@ -96,6 +104,9 @@ export function OverviewWorkspace({
   const [membersBySpace, setMembersBySpace] = useState(membersBySpaceProp);
   const [scheduledExtra, setScheduledExtra] = useState<TodoRow[]>([]);
   const [unscheduledExtra, setUnscheduledExtra] = useState<TodoRow[]>([]);
+  /** 远端实时事件驱动的完整主列表（覆盖 RSC props），避免只刷新溢出 extra */
+  const [scheduledLocal, setScheduledLocal] = useState<TodoRow[] | null>(null);
+  const scheduledPropSigRef = useRef("");
   const [unscheduledLocal, setUnscheduledLocal] =
     useState<TodoRow[]>(unscheduledProp);
   const [scheduledRefreshing, setScheduledRefreshing] = useState(false);
@@ -151,6 +162,14 @@ export function OverviewWorkspace({
     unschedPropSigRef.current = sig;
     setUnscheduledLocal(unscheduledProp);
   }, [unscheduledProp]);
+
+  // 已排期：RSC props 变化时同步进本地主列表（远端实时刷新走 scheduledLocal 直写）
+  useEffect(() => {
+    const sig = scheduledProp.map((t) => t.id).join(",");
+    if (sig === scheduledPropSigRef.current) return;
+    scheduledPropSigRef.current = sig;
+    setScheduledLocal(scheduledProp);
+  }, [scheduledProp]);
 
   // 日历 ↔ 未排期 / 创建删除 本地同步
   useEffect(() => {
@@ -267,11 +286,12 @@ export function OverviewWorkspace({
           return [id, flag === "1"];
         }),
       ) as Record<string, boolean>;
-      const rows = ((data ?? []) as unknown as TodoRow[]).filter((t) => {
-        if (assignMap[t.space_id]) return true;
-        if (!user) return false;
-        return isAssignedToUser(t, user.id);
-      });
+      const rows = ((data ?? []) as unknown as TodoRow[]).filter((t) =>
+        canViewerSeeTodo(t, {
+          currentUserId: user?.id,
+          isOwnerOrAdmin: !!assignMap[t.space_id],
+        }),
+      );
       setScheduledExtra(rows);
       } catch {
         if (cancelled) return;
@@ -312,11 +332,12 @@ export function OverviewWorkspace({
           .order("created_at", { ascending: false })
           .limit(UNSCHEDULED_CLIENT_LIMIT);
         if (cancelled || !data) return;
-        const rows = (data as unknown as TodoRow[]).filter((t) => {
-          if (assignMap[t.space_id]) return true;
-          if (!user) return false;
-          return isAssignedToUser(t, user.id);
-        });
+        const rows = (data as unknown as TodoRow[]).filter((t) =>
+          canViewerSeeTodo(t, {
+            currentUserId: user?.id,
+            isOwnerOrAdmin: !!assignMap[t.space_id],
+          }),
+        );
         setUnscheduledExtra(rows);
       })();
     };
@@ -336,17 +357,166 @@ export function OverviewWorkspace({
     };
   }, [deferUnscheduled, spaceIdsKey, canAssignKey, unscheduledProp.length]);
 
+  // 远端实时：收到别人增删改/改指派事件后，完整重拉「当前用户所有空间」的待办，
+  // 直接覆盖主列表状态（unscheduledLocal / scheduledLocal），而不是只补溢出 extra。
+  // 这是让概览页真正实时的关键——之前只重拉溢出 overflow，主列表（RSC props）从不更新，
+  // 体感就是「完全不实时」。本地拖拽走本地乐观事件，且被静音闸门拦截，不会走到这里。
+  const refetchAllTodos = useCallback(async () => {
+    if (!spaceIdsKey) return;
+    const spaceIds = spaceIdsKey.split(",").filter(Boolean);
+    if (spaceIds.length === 0) return;
+    const assignMap = Object.fromEntries(
+      canAssignKey.split(",").filter(Boolean).map((pair) => {
+        const [id, flag] = pair.split(":");
+        return [id, flag === "1"];
+      }),
+    ) as Record<string, boolean>;
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const [uRes, sRes] = await Promise.all([
+      supabase
+        .from("todos")
+        .select(TODO_SELECT_LEAN)
+        .in("space_id", spaceIds)
+        .neq("status", "done")
+        .is("start_at", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("todos")
+        .select(TODO_SELECT_LEAN)
+        .in("space_id", spaceIds)
+        .neq("status", "done")
+        .not("start_at", "is", null)
+        .order("start_at", { ascending: true }),
+    ]);
+    const canSee = (t: TodoRow) =>
+      canViewerSeeTodo(t, {
+        currentUserId: user?.id ?? null,
+        isOwnerOrAdmin: !!assignMap[t.space_id],
+      });
+    setUnscheduledLocal(
+      ((uRes.data ?? []) as unknown as TodoRow[]).filter(canSee),
+    );
+    setScheduledLocal(
+      ((sRes.data ?? []) as unknown as TodoRow[]).filter(canSee),
+    );
+  }, [spaceIdsKey, canAssignKey]);
+
+  // 增量补丁：只拉改动的那一行（RLS 已按可见性过滤），merge 进主列表状态，
+  // 不再整列表全量重拉——owner 大数据集下整列表替换正是「加载慢」根因。
+  // 跨「已排期↔未排期」迁移、可见性变化（移出空间/撤指派）都在此归位或剔除。
+  const patchTodo = useCallback(
+    async (todoId: string) => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("todos")
+        .select(TODO_SELECT_LEAN)
+        .eq("id", todoId)
+        .maybeSingle();
+      const row = (data ?? null) as TodoRow | null;
+      if (error || !row) {
+        // 不再可见（被删 / 移出空间 / 指派被撤且非成员）→ 从两列表剔除
+        setRemovedIds((prev) => {
+          if (prev.has(todoId)) return prev;
+          const next = new Set(prev);
+          next.add(todoId);
+          return next;
+        });
+        setUnscheduledLocal((prev) => prev.filter((t) => t.id !== todoId));
+        setScheduledLocal((prev) =>
+          prev ? prev.filter((t) => t.id !== todoId) : prev,
+        );
+        return;
+      }
+      // 可见：解除 removedIds 屏蔽，并按 start_at/status 归位到正确列表
+      setRemovedIds((prev) => {
+        if (!prev.has(todoId)) return prev;
+        const next = new Set(prev);
+        next.delete(todoId);
+        return next;
+      });
+      const isDone = row.status === "done";
+      const inScheduled = !isDone && row.start_at != null;
+      const inUnscheduled = !isDone && row.start_at == null;
+      setUnscheduledLocal((prev) => {
+        const base = prev.length > 0 ? prev : unscheduledProp;
+        if (!inUnscheduled) {
+          const filtered = base.filter((t) => t.id !== row.id);
+          return filtered.length === base.length ? base : filtered;
+        }
+        const map = new Map(base.map((t) => [t.id, t]));
+        map.set(row.id, row);
+        return [...map.values()];
+      });
+      setScheduledLocal((prev) => {
+        const base = prev ?? scheduledProp;
+        if (!inScheduled) {
+          const filtered = base.filter((t) => t.id !== row.id);
+          return filtered.length === base.length ? base : filtered;
+        }
+        const map = new Map(base.map((t) => [t.id, t]));
+        map.set(row.id, row);
+        return [...map.values()];
+      });
+    },
+    [unscheduledProp, scheduledProp],
+  );
+
+  useEffect(() => {
+    function onRemoteChange(ev?: Event) {
+      const todoId = (
+        ev as (Event & { detail?: { todoId?: string } }) | null
+      )?.detail?.todoId;
+      if (todoId) {
+        // 单条改动 → 增量打补丁（亚秒级、对称，不再整列表重拉）
+        void patchTodo(todoId);
+      } else {
+        // 无单条 id（改指派 / 轮询兜底）→ 完整重拉
+        void refetchAllTodos();
+      }
+    }
+    window.addEventListener(
+      TODOS_REALTIME_CHANGED,
+      onRemoteChange as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        TODOS_REALTIME_CHANGED,
+        onRemoteChange as EventListener,
+      );
+  }, [patchTodo, refetchAllTodos]);
+
+  // 订阅远程删除：别人删任务时精准隐藏（加进 removedIds，最终渲染统一过滤）
+  useEffect(() => {
+    function onRemoteDeleted(ev: Event) {
+      const todoId = (ev as CustomEvent<{ todoId: string }>).detail?.todoId;
+      if (!todoId) return;
+      setRemovedIds((prev) => {
+        if (prev.has(todoId)) return prev;
+        const next = new Set(prev);
+        next.add(todoId);
+        return next;
+      });
+    }
+    window.addEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+    return () =>
+      window.removeEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+  }, []);
+
   // 服务端 + 本地乐观更新合并（本地 upsert 覆盖同 id；removed 立刻隐藏）
   const scheduled = useMemo(() => {
+    const base = scheduledLocal ?? scheduledProp;
     const map = new Map<string, TodoRow>();
-    for (const t of scheduledProp) {
+    for (const t of base) {
       if (!removedIds.has(t.id)) map.set(t.id, t);
     }
     for (const t of scheduledExtra) {
       if (!removedIds.has(t.id)) map.set(t.id, t);
     }
     return [...map.values()];
-  }, [scheduledProp, scheduledExtra, removedIds]);
+  }, [scheduledLocal, scheduledProp, scheduledExtra, removedIds]);
   const unscheduled = useMemo(() => {
     const map = new Map<string, TodoRow>();
     const base =
@@ -376,14 +546,8 @@ export function OverviewWorkspace({
   const membersFetchedForRef = useRef("");
   const hasMembersProp = Object.keys(membersBySpaceProp).length > 0;
 
-  // 仅服务端未带成员时补拉；用 hasMembersProp 布尔依赖，避免 URL 切换反复 cancel
-  useEffect(() => {
-    if (hasMembersProp || !spaceIdsKey) {
-      if (hasMembersProp) membersFetchedForRef.current = spaceIdsKey;
-      return;
-    }
-    if (membersFetchedForRef.current === spaceIdsKey) return;
-    let cancelled = false;
+  const fetchMembersBySpace = useCallback(() => {
+    if (!spaceIdsKey) return;
     const spaceIds = spaceIdsKey.split(",").filter(Boolean);
     const supabase = createClient();
     void supabase
@@ -391,8 +555,7 @@ export function OverviewWorkspace({
       .select("user_id, space_id, profiles(display_name, email)")
       .in("space_id", spaceIds)
       .then(({ data }: { data: any[] | null }) => {
-        if (cancelled || !data) return;
-        membersFetchedForRef.current = spaceIdsKey;
+        if (!data) return;
         const next: Record<string, SpaceMemberOption[]> = {};
         for (const row of data) {
           const raw = row.profiles as unknown;
@@ -414,12 +577,26 @@ export function OverviewWorkspace({
               `${sid}:${(next[sid] ?? []).map((m) => m.user_id).join(",")}`,
           )
           .join("|");
+        membersFetchedForRef.current = spaceIdsKey;
         setMembersBySpace(next);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [hasMembersProp, spaceIdsKey]);
+  }, [spaceIdsKey]);
+
+  // 仅服务端未带成员时补拉；用 hasMembersProp 布尔依赖，避免 URL 切换反复 cancel
+  useEffect(() => {
+    if (hasMembersProp) {
+      membersFetchedForRef.current = spaceIdsKey;
+      return;
+    }
+    if (membersFetchedForRef.current === spaceIdsKey) return;
+    fetchMembersBySpace();
+  }, [hasMembersProp, spaceIdsKey, fetchMembersBySpace]);
+
+  // 订阅所关注空间的成员变更：任一成员加入/退出即重拉，避免指派列表陈旧
+  useWatchSpaceMembers(
+    spaceIdsKey ? spaceIdsKey.split(",").filter(Boolean) : [],
+    fetchMembersBySpace,
+  );
 
   const flatMembers = useMemo(() => {
     const map = new Map<string, SpaceMemberOption>();
@@ -503,18 +680,14 @@ export function OverviewWorkspace({
       ].join(" ")}
     >
       {tab === "boards" ? (
-        <TodoListPanel
-          todos={boardsOpen.filter((t) => t.start_at)}
-          completed={boardsDone.filter((t) => t.start_at)}
-          unscheduledTodos={filteredUnscheduled}
-          hiddenCount={hiddenCount}
-          onShowAll={onShowAll}
+        <OverviewBoards
+          groupBy="priority"
+          todos={boardsOpen}
+          completed={boardsDone}
           members={flatMembers}
           canAssign={canAssignAny}
-          hideTitle
           spaces={spaces}
-          defaultSpaceId={spaces[0]?.id}
-          includeDone
+          boardRange="all"
         />
       ) : null}
 

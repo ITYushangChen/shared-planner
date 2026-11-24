@@ -6,10 +6,11 @@ import { findConflictTodoIds } from "@/lib/conflicts";
 import {
   QUADRANT_LABEL,
   QUADRANT_ORDER,
+  effectiveQuadrant,
   getOverviewBounds,
   isAssignedToUser,
+  sortByQuadrantOrderThenTime,
   todoOverlapsRange,
-  todoQuadrant,
   type OverviewRange,
   type QuadrantKey,
   type SpaceMemberOption,
@@ -222,17 +223,18 @@ export function OverviewBoards({
       return QUADRANT_ORDER.map((key) => {
         const items = inRange.filter(
           (t) =>
-            todoQuadrant(t, Date.now(), {
+            effectiveQuadrant(t, Date.now(), {
               includeDone: t.status === "done",
             }) === key,
         );
+        const sorted = sortByQuadrantOrderThenTime(items);
         return {
           key,
           label: QUADRANT_LABEL[key],
           hint: QUADRANT_HINT[key],
-          todos: items,
-          doneCount: items.filter((t) => t.status === "done").length,
-          totalCount: items.length,
+          todos: sorted,
+          doneCount: sorted.filter((t) => t.status === "done").length,
+          totalCount: sorted.length,
         };
       });
     }
@@ -299,18 +301,34 @@ export function OverviewBoards({
                   }
                   onDragOver={(e) => drop.onDragOverQuadrant(e, key)}
                   onDragLeave={drop.onDragLeaveQuadrant}
-                  onDrop={(e) => void drop.onDropQuadrant(e, key)}
+                  onDrop={(e) =>
+                    void drop.onDropQuadrant(
+                      e,
+                      key,
+                      todosIn.map((t) => t.id),
+                    )
+                  }
                 >
                   {todosIn.map((todo) => (
                     <CompactTodoCard
                       key={todo.id}
                       todo={todo}
+                      testId="quadrant-todo-card"
                       variant="card"
                       layout="stack"
                       showComplete
                       importanceDrag
                       onToggleImportance={() =>
                         void drop.toggleImportance(todo)
+                      }
+                      onCardDrop={(e, position) =>
+                        void drop.onDropOnCard(
+                          e,
+                          key,
+                          todosIn.map((t) => t.id),
+                          todo.id,
+                          position,
+                        )
                       }
                       conflicted={conflictIds.has(todo.id)}
                       onOpen={() => setSelected(todo)}
@@ -328,7 +346,13 @@ export function OverviewBoards({
                 key={col.key}
                 onDragOver={(e) => drop.onDragOverQuadrant(e, col.key)}
                 onDragLeave={drop.onDragLeaveQuadrant}
-                onDrop={(e) => void drop.onDropQuadrant(e, col.key)}
+                onDrop={(e) =>
+                  void drop.onDropQuadrant(
+                    e,
+                    col.key as QuadrantKey,
+                    col.todos.map((t) => t.id),
+                  )
+                }
                 className={[
                   "flex min-h-[220px] flex-col rounded-xl border bg-[var(--surface-muted)]/50 transition-colors",
                   col.key.startsWith("urgent")
@@ -369,12 +393,22 @@ export function OverviewBoards({
                     col.todos.map((todo) => (
                       <CompactTodoCard
                         key={todo.id}
-                        todo={todo}
-                        variant="card"
-                        layout="stack"
-                        importanceDrag
+                      todo={todo}
+                      testId="quadrant-todo-card"
+                      variant="card"
+                      layout="stack"
+                      importanceDrag
                         onToggleImportance={() =>
                           void drop.toggleImportance(todo)
+                        }
+                        onCardDrop={(e, position) =>
+                          void drop.onDropOnCard(
+                            e,
+                            col.key as QuadrantKey,
+                            col.todos.map((t) => t.id),
+                            todo.id,
+                            position,
+                          )
                         }
                         conflicted={conflictIds.has(todo.id)}
                         onOpen={() => setSelected(todo)}
@@ -424,6 +458,7 @@ export function OverviewBoards({
                       <CompactTodoCard
                         key={todo.id}
                         todo={todo}
+                        testId="quadrant-todo-card"
                         variant="card"
                         layout="stack"
                         conflicted={conflictIds.has(todo.id)}
@@ -455,6 +490,7 @@ export function OverviewBoards({
                 <CompactTodoCard
                   key={todo.id}
                   todo={todo}
+                  testId="quadrant-todo-card"
                   variant="card"
                   conflicted={conflictIds.has(todo.id)}
                   onOpen={() => setSelected(todo)}

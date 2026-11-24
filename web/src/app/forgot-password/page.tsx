@@ -174,7 +174,11 @@ export default function ForgotPasswordPage() {
       )}
 
       <p className="mt-8 text-xs leading-relaxed text-zinc-400">
-        忘了恢复码？请联系空间管理员协助重置。
+        忘了恢复码？可让空间管理员前往「密码重置」工具（
+        <Link href="/admin/reset" className="text-[#2f5f8f] hover:underline">
+          /admin/reset
+        </Link>
+        ）凭你的邮箱协助重置。
       </p>
     </main>
   );

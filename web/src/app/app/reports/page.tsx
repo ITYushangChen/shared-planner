@@ -25,6 +25,8 @@ type SearchParams = Promise<{
   type?: string;
   date?: string;
   spaces?: string;
+  /** 周报「只看我的任务」开关：缺省=开（个人周报），显式 "0"=关（团队视图） */
+  mine?: string;
 }>;
 
 const ACTIVE_TODO_LIMIT = 2000;
@@ -54,6 +56,8 @@ export default async function ReportsPage({
   const canAssignBySpace = Object.fromEntries(
     spaces.map((s) => [s.id, s.role === "owner" || s.role === "admin"]),
   );
+  // 周报默认「只看我的任务」（个人周报）；显式 mine=0 才切到团队视图
+  const mineOnly = sp.mine !== "0";
 
   const emptyTodos = { data: [] as never[], error: null };
   const spaceIds =
@@ -115,6 +119,7 @@ export default async function ReportsPage({
     todos: ranged,
     canAssignBySpace,
     userId: user.id,
+    mineOnly,
   });
   const backlogData =
     backlog.length > 0
@@ -125,6 +130,7 @@ export default async function ReportsPage({
           todos: backlog,
           canAssignBySpace,
           userId: user.id,
+          mineOnly,
         })
       : null;
 
@@ -140,6 +146,7 @@ export default async function ReportsPage({
           backlogSpaces={backlogData?.spaces ?? []}
           fetchError={fetchError?.message ?? null}
           taskLimitReached={taskLimitReached}
+          mineOnly={mineOnly}
         />
       </Suspense>
     </main>

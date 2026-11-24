@@ -61,6 +61,27 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // 封禁拦截：已登录且被封禁的用户，清掉会话 cookie 并跳到 /banned。
+  // 注意 fail-open：is_user_banned 调用异常时一律放行，绝不让一个 RPC 故障锁死全站。
+  if (user) {
+    let banned = false;
+    try {
+      const { data } = await supabase.rpc("is_user_banned", { p_user_id: user.id });
+      banned = Boolean(data);
+    } catch {
+      banned = false;
+    }
+    if (banned) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/banned";
+      const res = NextResponse.redirect(redirectUrl);
+      for (const c of request.cookies.getAll()) {
+        res.cookies.set(c.name, "", { maxAge: 0, path: "/" });
+      }
+      return res;
+    }
+  }
+
   const path = request.nextUrl.pathname;
   const isLogin = path === "/login";
   const isApp = path === "/app" || path.startsWith("/app/");

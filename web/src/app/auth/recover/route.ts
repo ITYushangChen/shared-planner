@@ -79,7 +79,10 @@ export async function POST(request: NextRequest) {
     { p_email: email, p_code: code },
   );
   if (verifyErr) {
-    return NextResponse.json({ error: "校验失败，请重试" }, { status: 400 });
+    return NextResponse.json(
+      { error: "校验服务异常，请稍后再试，或让管理员在「密码重置」工具协助重置" },
+      { status: 400 },
+    );
   }
   if (!uid) {
     return NextResponse.json(

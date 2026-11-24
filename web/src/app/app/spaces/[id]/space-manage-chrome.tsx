@@ -17,6 +17,7 @@ import {
 } from "@/lib/space-data-cache";
 import type { InviteRow } from "@/lib/invites";
 import type { SpaceMemberOption, SpaceNavItem } from "@/lib/todos";
+import { useWatchSpaceMembers } from "@/lib/use-watch-space-members";
 import { EditSpaceForm } from "./edit-space-form";
 import { ViewSwitcher } from "../../view-switcher";
 import { SpaceInvites } from "./space-invites";
@@ -133,6 +134,16 @@ export function SpaceManageChrome({
     };
   }, [deferMembers, memberOptionsProp.length, space.id]);
 
+  // 订阅本空间成员变更：别人加入/退出时刷新指派成员列表与成员面板
+  useWatchSpaceMembers([space.id], () => {
+    void loadSpaceMembers(space.id, {
+      onData: (data) => {
+        setMemberOptions(data.options);
+        setMemberRows(data.rows);
+      },
+    });
+  });
+
   useEffect(() => {
     if (memberOptionsProp.length === 0) return;
     setCachedSpaceMembers(space.id, {
@@ -216,6 +227,7 @@ export function SpaceManageChrome({
                 initialKind={space.kind}
                 initialDescription={space.description}
                 initialVisibility={space.visibility ?? "private"}
+                initialAvatarUrl={space.avatar_url}
                 canEdit
               />
             ) : (

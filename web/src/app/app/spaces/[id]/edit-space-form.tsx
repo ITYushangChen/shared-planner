@@ -26,6 +26,7 @@ type Props = {
   initialKind: string;
   initialDescription: string | null;
   initialVisibility?: string;
+  initialAvatarUrl?: string | null;
   canEdit: boolean;
 };
 
@@ -35,6 +36,7 @@ export function EditSpaceForm({
   initialKind,
   initialDescription,
   initialVisibility = "private",
+  initialAvatarUrl = null,
   canEdit,
 }: Props) {
   const router = useRouter();
@@ -42,7 +44,9 @@ export function EditSpaceForm({
   const { spacePrefsById } = useUiPrefs();
   const prefs = spacePrefsById[spaceId];
   const fileRef = useRef<HTMLInputElement>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(initialName);
+  const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl ?? "");
   const [kind, setKind] = useState<SpaceKind>(
     isSpaceKind(initialKind) ? initialKind : "other",
   );
@@ -67,6 +71,7 @@ export function EditSpaceForm({
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   if (!canEdit) {
     return (
@@ -129,6 +134,59 @@ export function EditSpaceForm({
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  async function onUploadAvatar(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setMsg("请选择图片文件");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setMsg("头像请小于 5MB");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setMsg("上传中…");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setUploadingAvatar(false);
+      setMsg("请先登录");
+      return;
+    }
+
+    const ext =
+      file.type === "image/png"
+        ? "png"
+        : file.type === "image/webp"
+          ? "webp"
+          : file.type === "image/gif"
+            ? "gif"
+            : "jpg";
+    const path = `${user.id}/space-avatar/${spaceId}/${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from("backgrounds")
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (upErr) {
+      setUploadingAvatar(false);
+      setMsg(
+        upErr.message.includes("Bucket not found")
+          ? "未找到 backgrounds 存储桶，请先执行 storage 迁移 SQL"
+          : upErr.message,
+      );
+      return;
+    }
+
+    const { data } = supabase.storage.from("backgrounds").getPublicUrl(path);
+    setAvatarUrl(data.publicUrl);
+    setUploadingAvatar(false);
+    setMsg("头像已上传，请点保存生效");
+    if (avatarRef.current) avatarRef.current.value = "";
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -150,6 +208,7 @@ export function EditSpaceForm({
         kind,
         visibility,
         description: description.trim() || null,
+        avatar_url: avatarUrl.trim() || null,
       })
       .eq("id", spaceId);
 
@@ -210,6 +269,47 @@ export function EditSpaceForm({
               required
             />
           </label>
+
+          <div className="space-y-2">
+            <p className="text-sm text-zinc-700">空间头像</p>
+            <div className="flex items-center gap-3">
+              {avatarUrl.trim() ? (
+                <img
+                  src={avatarUrl.trim()}
+                  alt="空间头像"
+                  className="h-12 w-12 shrink-0 rounded-full object-cover"
+                />
+              ) : (
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-base font-semibold text-white">
+                  {(name.trim() || "?").slice(0, 1).toUpperCase()}
+                </span>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <label className="inline-flex cursor-pointer items-center rounded-lg border border-brand/40 bg-brand-soft px-3 py-2 text-xs font-medium text-brand transition-colors hover:bg-brand hover:text-white">
+                  {uploadingAvatar ? "上传中…" : "选择头像"}
+                  <input
+                    ref={avatarRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    disabled={uploadingAvatar || loading}
+                    onChange={(e) =>
+                      void onUploadAvatar(e.target.files?.[0] ?? null)
+                    }
+                  />
+                </label>
+                {avatarUrl.trim() ? (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-600 hover:bg-zinc-50"
+                    onClick={() => setAvatarUrl("")}
+                  >
+                    清除头像
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
 
           <div className="space-y-2">
             <p className="text-sm text-zinc-700">背景图片</p>

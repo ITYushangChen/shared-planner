@@ -9,6 +9,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import type {
   DateSelectArg,
+  DatesSetArg,
   EventClickArg,
   EventContentArg,
   EventDropArg,
@@ -26,6 +27,8 @@ import { findConflictTodoIds } from "@/lib/conflicts";
 import { notifyTodoAssignment } from "@/lib/notify";
 import {
   TODO_DELETED,
+  TODO_SCHEDULED,
+  TODO_UNSCHEDULED,
   TODO_UPSERTED,
   applyTodoDelete,
   applyTodoUpsert,
@@ -33,6 +36,8 @@ import {
   emitTodoUnscheduled,
   emitTodoUpserted,
   type TodoDeletedDetail,
+  type TodoScheduledDetail,
+  type TodoUnscheduledDetail,
   type TodoUpsertedDetail,
 } from "@/lib/todo-schedule-events";
 import {
@@ -50,11 +55,16 @@ import {
   type SpaceNavItem,
   type TodoRow,
 } from "@/lib/todos";
+import {
+  TODOS_REALTIME_CHANGED,
+  TODOS_REALTIME_DELETED,
+} from "@/lib/use-todos-realtime";
+import { loadSpaceCalendarTodos } from "@/lib/space-data-cache";
 import { hexToRgba, resolveTaskOpacity } from "@/lib/ui-prefs";
+import { CalendarEventTitle } from "./calendar-event-title";
 import { chipClass } from "./ui-btn-class";
 import { Modal } from "./ui-modal";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
-import { DEFAULT_DEPARTMENT } from "@/lib/departments";
 
 const FC_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 
@@ -92,20 +102,6 @@ function toLocalInput(d: Date) {
 function toDateInput(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function formatEventTimeRange(
-  start: Date | null,
-  end: Date | null,
-  allDay: boolean,
-) {
-  if (allDay) return "全天";
-  if (!start) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const a = `${pad(start.getHours())}:${pad(start.getMinutes())}`;
-  if (!end) return a;
-  const b = `${pad(end.getHours())}:${pad(end.getMinutes())}`;
-  return `${a}~${b}`;
 }
 
 type Props = {
@@ -162,6 +158,8 @@ export function TodosCalendar({
   const todosSigRef = useRef("");
   /** 刚拖过的 id：父级 props 同步时保留本地时段，避免整表重绑闪屏 */
   const dirtyTodoIdsRef = useRef(new Set<string>());
+  /** 刚「取消排期」的任务 id：强制从日历移除，即便实时回源/父级 props 仍带该任务也绝不重新加回 */
+  const unscheduleGuardRef = useRef(new Set<string>());
   todosRef.current = todos;
   const [selected, setSelected] = useState<TodoRow | null>(null);
   /** 消息中心冲突跳转：?focus=todoId */
@@ -178,6 +176,22 @@ export function TodosCalendar({
     todo: TodoRow;
   } | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  /**
+   * 视图外改动提示：轮询/他人刷新重拉到的是「当前空间全部已排期任务」，
+   * 但 FullCalendar 只渲染当前视图时间窗口内的事件。当某个任务落在当前
+   * 周/月窗口之外（如相邻周的任务）时，观察端看不到它的变动，表现为
+   * 「某某任务不实时」。这里统计「当前视图窗口之外的任务集合」的签名，
+   * 一旦该集合发生变化（他人新增/移动/删除窗口外任务），就在日历顶部
+   * 提示「其他周的任务有更新 · 共 N 项在视图外」，点击可跳转到其中最早一项所在的日期。
+   */
+  const [outsideUpdate, setOutsideUpdate] = useState<{
+    count: number;
+    firstDate: string | null;
+  } | null>(null);
+  const outsideSigRef = useRef("");
+  const outsideInitRef = useRef(false);
+  /** 标记「点击查看」触发的程序化跳转，handleDatesSet 据此不重复提示 */
+  const programmaticGotoRef = useRef(false);
 
   // 父级 props 更新：同内容跳过；有 dirty 则按 id 合并时段，避免整表闪
   useEffect(() => {
@@ -197,31 +211,37 @@ export function TodosCalendar({
     }
 
     const localById = new Map(todosRef.current.map((t) => [t.id, t]));
-    const merged = todosProp.map((t) => {
-      if (!dirty.has(t.id)) return t;
-      const local = localById.get(t.id);
-      if (!local) return t;
-      // props 已追上本地时段则清 dirty
-      if (
-        local.start_at === t.start_at &&
-        local.end_at === t.end_at &&
-        local.is_all_day === t.is_all_day
-      ) {
-        dirty.delete(t.id);
-        return t;
-      }
-      return {
-        ...t,
-        start_at: local.start_at,
-        end_at: local.end_at,
-        is_all_day: local.is_all_day,
-        duration_minutes: local.duration_minutes,
-      };
-    });
+    const merged = todosProp
+      .filter((t) => !unscheduleGuardRef.current.has(t.id))
+      .map((t) => {
+        if (!dirty.has(t.id)) return t;
+        const local = localById.get(t.id);
+        if (!local) return t;
+        // props 已追上本地时段则清 dirty
+        if (
+          local.start_at === t.start_at &&
+          local.end_at === t.end_at &&
+          local.is_all_day === t.is_all_day
+        ) {
+          dirty.delete(t.id);
+          return t;
+        }
+        return {
+          ...t,
+          start_at: local.start_at,
+          end_at: local.end_at,
+          is_all_day: local.is_all_day,
+          duration_minutes: local.duration_minutes,
+        };
+      });
     // 本地有、props 暂无的（极少）保留
     for (const id of dirty) {
       const local = localById.get(id);
       if (local && !merged.some((t) => t.id === id)) merged.push(local);
+    }
+    // 父级已不再携带该任务（服务端已确认取消排期）→ 解除守卫，避免长期屏蔽后续正常排期
+    for (const id of [...unscheduleGuardRef.current]) {
+      if (!todosProp.some((t) => t.id === id)) unscheduleGuardRef.current.delete(id);
     }
 
     const mergedSig = todosSignature(merged);
@@ -292,6 +312,16 @@ export function TodosCalendar({
     function onUpsert(ev: Event) {
       const todo = (ev as CustomEvent<TodoUpsertedDetail>).detail?.todo;
       if (!todo?.id) return;
+      // 本地打勾完成：立即从日历移除（与 refetch 的 .neq(status,done) 一致），
+      // 不等 realtime/轮询重拉，避免「完成还挂在日历上、外观与进行中无差别」。
+      if (todo.status === "done") {
+        if (!todosRef.current.some((t) => t.id === todo.id)) return;
+        const next = applyTodoDelete(todosRef.current, todo.id);
+        todosRef.current = next;
+        todosSigRef.current = todosSignature(next);
+        setTodos(next);
+        return;
+      }
       if (!todo.start_at) {
         const next = applyTodoDelete(todosRef.current, todo.id);
         todosRef.current = next;
@@ -322,6 +352,203 @@ export function TodosCalendar({
       window.removeEventListener(TODO_DELETED, onDeleted);
     };
   }, []);
+
+  // 远程实时：他人增/改/改排期/删除任务，日历自己重拉最新的已排期数据，
+  // 不依赖父级 todosProp 传值——即使将来日历被单独渲染也能实时同步。
+  const spaceIdsKey = useMemo(() => {
+    const ids: string[] = [];
+    if (spaces?.length) ids.push(...spaces.map((s) => s.id));
+    if (ids.length === 0 && defaultSpaceId) ids.push(defaultSpaceId);
+    return Array.from(new Set(ids)).join(",");
+  }, [spaces, defaultSpaceId]);
+
+  useEffect(() => {
+    const ids = spaceIdsKey.split(",").filter(Boolean);
+    if (ids.length === 0) return;
+    let cancelled = false;
+
+    function refetch(force = false) {
+      if (!force && isTodosRealtimeRefreshSuppressed()) return;
+      void Promise.all(ids.map((id) => loadSpaceCalendarTodos(id))).then(
+        (caches) => {
+          if (cancelled) return;
+          const scheduled = caches.flatMap((c) => c.scheduled ?? []);
+          const localById = new Map(todosRef.current.map((t) => [t.id, t]));
+          // 保留本地刚拖动的时段，避免被服务端快照覆盖而闪屏；
+          // 但「刚取消排期」的任务（在 unscheduleGuard 中）即便服务端因竞态仍返回已排期，
+          // 也绝不重新加回日历——修复拖到未排期后日历仍显示、需刷新才消失。
+          const merged = scheduled
+            .filter((t) => !unscheduleGuardRef.current.has(t.id))
+            .map((t) => {
+              if (dirtyTodoIdsRef.current.has(t.id)) {
+                const local = localById.get(t.id);
+                if (local) {
+                  return {
+                    ...t,
+                    start_at: local.start_at,
+                    end_at: local.end_at,
+                    is_all_day: local.is_all_day,
+                    duration_minutes: local.duration_minutes,
+                  };
+                }
+              }
+              return t;
+            });
+          todosRef.current = merged;
+          todosSigRef.current = todosSignature(merged);
+          setTodos(merged);
+          // 服务端已确认该任务不在已排期集合中 → 解除守卫，避免长期屏蔽其后续正常排期
+          for (const id of [...unscheduleGuardRef.current]) {
+            if (!scheduled.some((t) => t.id === id)) unscheduleGuardRef.current.delete(id);
+          }
+
+          // 视图外改动提示：只关心「当前视图窗口之外」的任务集合是否变化。
+          // 首次仅记录基线不提示（避免一进页面就提示「其他周有 N 项」）；
+          // 之后集合变化才提示，确保只看得到窗口内的用户不会漏掉窗口外的改动。
+          const { sig, count, firstDate } = computeOutsideFromList(scheduled);
+          if (!outsideInitRef.current) {
+            outsideInitRef.current = true;
+            outsideSigRef.current = sig;
+          } else if (sig !== outsideSigRef.current) {
+            setOutsideUpdate(count > 0 ? { count, firstDate } : null);
+            outsideSigRef.current = sig;
+          }
+        },
+      );
+    }
+
+    function onRemoteDeleted(ev: Event) {
+      if (isTodosRealtimeRefreshSuppressed()) return;
+      const todoId = (ev as CustomEvent<{ todoId: string }>).detail?.todoId;
+      if (!todoId) return;
+      const next = applyTodoDelete(todosRef.current, todoId);
+      todosRef.current = next;
+      todosSigRef.current = todosSignature(next);
+      setTodos(next);
+      setSelected((cur) => (cur?.id === todoId ? null : cur));
+    }
+
+    // 本地乐观更新（编辑器保存 / 删除 / 改指派）：永不被静音闸门挡住，
+    // 否则「自己改完指派，自己的日历卡片不实时更新」只能靠手动刷新。
+    // 远端 realtime 回显仍走 TODOS_REALTIME_CHANGED（受闸门保护，避免抖动）。
+    function onLocalUpserted(ev: Event) {
+      const todo = (ev as CustomEvent<TodoUpsertedDetail>).detail?.todo;
+      if (!todo) return;
+      // 本地打勾完成：立即从日历移除（与 refetch 的 .neq(status,done) 一致），
+      // 不再等 realtime/轮询重拉，避免完成态任务滞留且无视觉区分。
+      if (todo.status === "done") {
+        if (!todosRef.current.some((t) => t.id === todo.id)) return;
+        const next = applyTodoDelete(todosRef.current, todo.id);
+        todosRef.current = next;
+        todosSigRef.current = todosSignature(next);
+        setTodos(next);
+        return;
+      }
+      // 重新排期（拿到 start_at）意味着不再是「未排期」，解除对应守卫，避免被误屏蔽
+      if (todo.start_at) unscheduleGuardRef.current.delete(todo.id);
+      // 日历只渲染已排期任务；未排期且本就不在列表里的不混入
+      if (!todo.start_at && !todosRef.current.some((t) => t.id === todo.id))
+        return;
+      const next = applyTodoUpsert(todosRef.current, todo);
+      todosRef.current = next;
+      todosSigRef.current = todosSignature(next);
+      setTodos(next);
+    }
+    function onLocalDeleted(ev: Event) {
+      const todoId = (ev as CustomEvent<TodoDeletedDetail>).detail?.todoId;
+      if (!todoId) return;
+      const next = applyTodoDelete(todosRef.current, todoId);
+      todosRef.current = next;
+      todosSigRef.current = todosSignature(next);
+      setTodos(next);
+      setSelected((cur) => (cur?.id === todoId ? null : cur));
+    }
+    // 排期 / 取消排期由其他组件触发，本视图无增量数据，force 重拉一次
+    function onLocalScheduled(ev?: Event) {
+      // 从「未排期」拖回日历：解除守卫，否则 ≤8s 内仍会被守卫误屏蔽
+      const todoId = (ev as CustomEvent<TodoScheduledDetail>)?.detail?.todoId;
+      if (todoId) unscheduleGuardRef.current.delete(todoId);
+      refetch(true);
+    }
+    function onLocalUnscheduled(ev?: Event) {
+      const todoId = (ev as CustomEvent<TodoUnscheduledDetail>)?.detail?.todo?.id;
+      if (todoId) {
+        // 本地刚取消排期：加入守卫，避免 force 重拉因服务端竞态仍返回已排期而被重新加回
+        unscheduleGuardRef.current.add(todoId);
+        // 安全网：竞态窗口（远小于 6s 静音）过后解除，避免长期屏蔽该任务后续正常排期
+        setTimeout(() => unscheduleGuardRef.current.delete(todoId), 8000);
+      }
+      refetch(true);
+    }
+
+    const onRealtimeChanged = () => refetch();
+    window.addEventListener(TODOS_REALTIME_CHANGED, onRealtimeChanged);
+    window.addEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+    window.addEventListener(TODO_UPSERTED, onLocalUpserted);
+    window.addEventListener(TODO_DELETED, onLocalDeleted);
+    window.addEventListener(TODO_SCHEDULED, onLocalScheduled);
+    window.addEventListener(TODO_UNSCHEDULED, onLocalUnscheduled);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(TODOS_REALTIME_CHANGED, onRealtimeChanged);
+      window.removeEventListener(TODOS_REALTIME_DELETED, onRemoteDeleted);
+      window.removeEventListener(TODO_UPSERTED, onLocalUpserted);
+      window.removeEventListener(TODO_DELETED, onLocalDeleted);
+      window.removeEventListener(TODO_SCHEDULED, onLocalScheduled);
+      window.removeEventListener(TODO_UNSCHEDULED, onLocalUnscheduled);
+    };
+  }, [spaceIdsKey]);
+
+  /** 统计「当前 FC 视图窗口之外」的任务集合，返回签名/数量/最早一项日期 */
+  function computeOutsideFromList(list: TodoRow[]) {
+    const api = calendarRef.current?.getApi();
+    const view = api?.view;
+    if (!view) return { sig: "", count: 0, firstDate: null as string | null };
+    const start = view.activeStart.getTime();
+    const end = view.activeEnd.getTime();
+    let count = 0;
+    let sig = "";
+    let firstDate: string | null = null;
+    for (const t of list) {
+      if (!t.start_at) continue;
+      const s = new Date(t.start_at).getTime();
+      const e = t.end_at ? new Date(t.end_at).getTime() : s;
+      // 与视图窗口有任何交集即视为「在视图内」
+      if (e > start && s < end) continue;
+      count++;
+      sig += `${t.id}:${t.start_at}:${t.end_at}:${t.status}|`;
+      const d = new Date(t.start_at);
+      if (!firstDate || d.getTime() < new Date(firstDate).getTime()) {
+        firstDate = t.start_at;
+      }
+    }
+    return { sig, count, firstDate };
+  }
+
+  /** 翻页/切换视图：用户主动浏览，清提示并把基线同步到当前视图 */
+  function handleDatesSet(_info: DatesSetArg) {
+    const { sig, count, firstDate } = computeOutsideFromList(todosRef.current);
+    outsideSigRef.current = sig;
+    // 由「点击查看」程序化跳转触发的日期变更：已带用户去看变动项，
+    // 不再重复提示，避免点完立刻又冒出黄条
+    if (programmaticGotoRef.current) {
+      programmaticGotoRef.current = false;
+      setOutsideUpdate(null);
+      return;
+    }
+    setOutsideUpdate(count > 0 ? { count, firstDate } : null);
+  }
+
+  /** 点击徽标：跳转到最早一个视图外任务所在日期 */
+  function jumpToOutside() {
+    if (!outsideUpdate?.firstDate) return;
+    const api = calendarRef.current?.getApi();
+    if (api) {
+      programmaticGotoRef.current = true;
+      api.gotoDate(new Date(outsideUpdate.firstDate));
+    }
+    setOutsideUpdate(null);
+  }
 
   const editorMembers = selected
     ? (membersBySpace?.[selected.space_id] ?? members)
@@ -382,7 +609,12 @@ export function TodosCalendar({
           ? parsedEnd
           : new Date(s.getTime() + 60 * 60 * 1000);
       const sMin = s.getHours() * 60 + s.getMinutes();
-      const eMin = e.getHours() * 60 + e.getMinutes();
+      const eMin =
+        e.getTime() > s.getTime() &&
+        e.getFullYear() * 10000 + (e.getMonth() + 1) * 100 + e.getDate() >
+          s.getFullYear() * 10000 + (s.getMonth() + 1) * 100 + s.getDate()
+          ? 24 * 60
+          : e.getHours() * 60 + e.getMinutes();
       minMin = Math.min(minMin, Math.floor(sMin / 60) * 60);
       maxMin = Math.max(maxMin, Math.ceil(eMin / 60) * 60);
     }
@@ -541,7 +773,6 @@ export function TodosCalendar({
         title: `${todo.title}（副本）`,
         description: todo.description,
         priority: todo.priority,
-        department: todo.department ?? DEFAULT_DEPARTMENT,
         status: "todo",
         start_at,
         end_at,
@@ -709,44 +940,18 @@ export function TodosCalendar({
 
   function renderEventContent(arg: EventContentArg) {
     const todoTitle =
-      (arg.event.extendedProps.todoTitle as string | undefined) ||
+      (arg.event.extendedProps.todoTitle as string | undefined)?.trim() ||
       arg.event.title;
-    const timeLabel = formatEventTimeRange(
-      arg.event.start,
-      arg.event.end,
-      arg.event.allDay,
-    );
-    const assignees =
-      (arg.event.extendedProps.assignees as string | undefined)?.trim() ||
-      "未指定";
+    // 卡片里只显示标题：时间由事件在时间轴上的位置/时长表达，指派人不在日历里看
     return (
       <div className="fc-event-stack px-0.5 py-0.5 leading-snug">
-        <div
+        <CalendarEventTitle
+          title={todoTitle}
           className={[
-            "flex min-w-0 items-baseline gap-1 font-semibold leading-snug",
+            "block w-full truncate font-semibold leading-snug",
             isMobile ? "text-[12px]" : "text-[15px] md:text-[14px]",
           ].join(" ")}
-        >
-          <span className="min-w-0 flex-1 truncate">{todoTitle}</span>
-          <span
-            className={[
-              "shrink-0 font-normal opacity-90",
-              isMobile ? "text-[9px]" : "text-[11px] md:text-[10px]",
-            ].join(" ")}
-          >
-            {assignees}
-          </span>
-        </div>
-        {timeLabel ? (
-          <div
-            className={[
-              "whitespace-normal break-words leading-snug opacity-90",
-              isMobile ? "text-[9px]" : "text-[12px] md:text-[11px]",
-            ].join(" ")}
-          >
-            {timeLabel}
-          </div>
-        ) : null}
+        />
       </div>
     );
   }
@@ -810,6 +1015,16 @@ export function TodosCalendar({
         </p>
       )}
 
+      {outsideUpdate ? (
+        <button
+          type="button"
+          onClick={jumpToOutside}
+          className="mb-2 flex w-full items-center justify-center gap-1 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 transition hover:bg-amber-100"
+        >
+          其他周的任务有更新 · 共 {outsideUpdate.count} 项在视图外 · 点击查看
+        </button>
+      ) : null}
+
       <div
         className="fc-theme sharetodo-calendar text-sm"
         onContextMenu={(e) => {
@@ -857,6 +1072,16 @@ export function TodosCalendar({
           nowIndicator
           editable
           droppable
+          /* 拖到日历之外的「未排期待办」投放区属 FC 眼中的「无效落点」，
+             默认会播放 500ms 回退动画（镜像飞回日历原位置）再被我们移除，
+             表现为「任务先弹回日历」。关掉回退动画即可让影子直接消失并落入未排期。 */
+          dragRevertDuration={0}
+          /* 主内容容器有 backdrop-blur，会为内部 position:fixed 的拖拽镜像建立包含块，
+             导致镜像相对容器定位而非视口，出现「任务与鼠标错位一大截」。
+             把镜像挂到 body（在 blur 容器之外）即可让 fixed 回归视口坐标系。 */
+          fixedMirrorParent={
+            typeof document !== "undefined" ? document.body : undefined
+          }
           selectable
           selectMirror
           eventDurationEditable
@@ -871,6 +1096,7 @@ export function TodosCalendar({
           eventReceive={onEventReceive}
           eventDragStart={onEventDragStart}
           eventDragStop={onEventDragStop}
+          datesSet={handleDatesSet}
           eventDidMount={(arg) => {
             arg.el.setAttribute("data-event-id", arg.event.id);
             const taskOpacity = resolveTaskOpacity(uiPrefs);

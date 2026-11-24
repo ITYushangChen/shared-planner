@@ -226,6 +226,17 @@ export function SpaceNavRow({
       ].join(" ")}
     >
       <div className="flex min-w-0 items-center gap-0.5">
+        {space.avatar_url ? (
+          <img
+            src={space.avatar_url}
+            alt=""
+            className="mr-1.5 h-6 w-6 shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <span className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-[11px] font-semibold text-white">
+            {space.name.slice(0, 1).toUpperCase()}
+          </span>
+        )}
         <Link
           href={href}
           prefetch={false}

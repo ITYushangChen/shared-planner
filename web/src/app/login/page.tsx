@@ -59,6 +59,8 @@ function LoginForm() {
   );
   const [recoveryCode, setRecoveryCode] = useState("");
   const [loading, setLoading] = useState(false);
+  // 当前处于「登录 / 注册」哪个模式，用于在按钮上动态高亮当前模式
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
 
   function setMessage(text: string, kind: MsgKind) {
     setMsg(text);
@@ -124,13 +126,10 @@ function LoginForm() {
     }
   }
 
-  async function signIn(e?: FormEvent) {
+  // 回车提交时，按当前模式执行对应操作
+  async function handleSubmit(e?: FormEvent) {
     e?.preventDefault();
-    await authPassword("signin");
-  }
-
-  async function signUp() {
-    await authPassword("signup");
+    await authPassword(mode);
   }
 
   return (
@@ -148,7 +147,7 @@ function LoginForm() {
         </p>
       ) : null}
 
-      <form onSubmit={signIn} className="mt-8 flex flex-col gap-3">
+      <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3">
         <label className="text-sm text-zinc-700">
           邮箱
           <input
@@ -187,17 +186,32 @@ function LoginForm() {
 
         <div className="mt-2 flex gap-2">
           <button
-            type="submit"
+            type="button"
             disabled={loading || !envOk}
-            className="flex-1 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => {
+              setMode("signin");
+              void authPassword("signin");
+            }}
+            className={
+              mode === "signin"
+                ? "flex-1 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                : "flex-1 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors duration-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            }
           >
-            {loading ? "处理中…" : "登录"}
+            登录
           </button>
           <button
             type="button"
             disabled={loading || !envOk}
-            onClick={() => void signUp()}
-            className="flex-1 rounded-xl border border-[#2f5f8f]/55 px-4 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => {
+              setMode("signup");
+              void authPassword("signup");
+            }}
+            className={
+              mode === "signup"
+                ? "flex-1 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                : "flex-1 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors duration-200 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            }
           >
             注册
           </button>

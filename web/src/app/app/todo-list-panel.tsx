@@ -1,29 +1,25 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { findConflictTodoIds } from "@/lib/conflicts";
 import {
-  todoQuadrant,
-  type QuadrantKey,
+  PRIORITY_COLORS,
+  PRIORITY_LABEL,
+  formatTodoTimeLabel,
+  sortByQuadrantOrderThenTime,
   type SpaceMemberOption,
   type SpaceNavItem,
   type TodoRow,
 } from "@/lib/todos";
-import { CompactTodoCard } from "./compact-todo-card";
-import {
-  NOTEBOOK_QUADRANT_META,
-  NOTEBOOK_QUADRANT_ORDER,
-  NotebookQuadrant,
-} from "./notebook-quadrant";
-import { QuickCreateTodo } from "./quick-create-todo";
 import { TodoEditor } from "./todo-editor";
+import { QuickCreateTodo } from "./quick-create-todo";
 import { Modal } from "./ui-modal";
-import { useImportanceDrop } from "./use-importance-drop";
 
 type Props = {
   todos: TodoRow[];
   completed?: TodoRow[];
-  /** 供从未排期侧栏拖入象限时查找任务 */
+  /** 未排期（无 start_at）的待办，合并进同一张表 */
   unscheduledTodos?: TodoRow[];
   members: SpaceMemberOption[];
   title?: string;
@@ -31,7 +27,7 @@ type Props = {
   hideTitle?: boolean;
   spaces?: SpaceNavItem[];
   defaultSpaceId?: string;
-  /** true：象限内同时展示已完成（四象限）；false：仅未完成（四象限待办） */
+  /** true：表格内同时展示已完成；false：仅未完成 */
   includeDone?: boolean;
   /** 当前时间范围外、或被指派给当前筛选人但未显示的待办数量（用于空态引导） */
   hiddenCount?: number;
@@ -39,31 +35,18 @@ type Props = {
   onShowAll?: () => void;
 };
 
-function sortByTime(list: TodoRow[]) {
-  return [...list].sort((a, b) => {
-    const aDone = a.status === "done" ? 1 : 0;
-    const bDone = b.status === "done" ? 1 : 0;
-    if (aDone !== bDone) return aDone - bDone;
-    const as = a.start_at
-      ? new Date(a.start_at).getTime()
-      : a.due_at
-        ? new Date(a.due_at).getTime()
-        : Number.MAX_SAFE_INTEGER;
-    const bs = b.start_at
-      ? new Date(b.start_at).getTime()
-      : b.due_at
-        ? new Date(b.due_at).getTime()
-        : Number.MAX_SAFE_INTEGER;
-    return as - bs;
-  });
+function isOverdue(todo: TodoRow, now: number): boolean {
+  if (todo.status === "done" || !todo.due_at) return false;
+  const t = new Date(todo.due_at).getTime();
+  return !Number.isNaN(t) && t < now;
 }
 
-function isImportantKey(key: QuadrantKey) {
-  return key === "urgent_important" || key === "important";
+function assigneeLabel(todo: TodoRow): { text: string; extra: number } {
+  const list = todo.todo_assignees ?? [];
+  if (list.length === 0) return { text: "未指派", extra: 0 };
+  const first = list[0].profiles?.display_name || "未知";
+  return { text: first, extra: Math.max(0, list.length - 1) };
 }
-
-const SCHEDULE_HINT =
-  "请设置开始与结束时间后再保存，以便出现在日历中。";
 
 export function TodoListPanel({
   todos,
@@ -79,120 +62,81 @@ export function TodoListPanel({
   hiddenCount = 0,
   onShowAll,
 }: Props) {
+  const supabase = createClient();
   const [selected, setSelected] = useState<TodoRow | null>(null);
-  const [scheduleHint, setScheduleHint] = useState(false);
-  const [createFor, setCreateFor] = useState<{
-    priority: "high" | "low";
-  } | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [toggling, setToggling] = useState<string | null>(null);
 
+  const now = Date.now();
   const conflictIds = useMemo(() => findConflictTodoIds(todos), [todos]);
 
-  const onUnscheduledDrop = useCallback((todo: TodoRow) => {
-    setSelected(todo);
-    setScheduleHint(true);
-  }, []);
-
-  const drop = useImportanceDrop(
-    useMemo(
-      () => [todos, completed, unscheduledTodos],
-      [todos, completed, unscheduledTodos],
-    ),
-    useMemo(() => ({ onUnscheduledDrop }), [onUnscheduledDrop]),
-  );
-
-  const listed = useMemo(() => {
-    const open = drop.applyPriority(todos.filter((t) => t.status !== "done"));
-    if (!includeDone) return sortByTime(open);
-    const done = drop.applyPriority(
-      completed.filter((t) => t.status === "done"),
-    );
-    return sortByTime([...open, ...done]);
-  }, [todos, completed, drop, includeDone]);
-
-  const columns = useMemo(() => {
-    return NOTEBOOK_QUADRANT_ORDER.map((key) => {
-      const items = listed.filter(
-        (t) =>
-          todoQuadrant(t, Date.now(), {
-            includeDone: t.status === "done",
-          }) === key,
-      );
-      const openCount = items.filter((t) => t.status !== "done").length;
-      const doneInQuadrant = includeDone
-        ? items.filter((t) => t.status === "done").length
-        : completed.filter(
-            (t) =>
-              t.status === "done" &&
-              todoQuadrant(t, Date.now(), { includeDone: true }) === key,
-          ).length;
-      return {
-        key,
-        ...NOTEBOOK_QUADRANT_META[key],
-        items,
-        openCount,
-        doneCount: doneInQuadrant,
-      };
-    });
-  }, [listed, completed, includeDone]);
+  const rows = useMemo(() => {
+    const open = [
+      ...todos.filter((t) => t.status !== "done"),
+      ...unscheduledTodos.filter((t) => t.status !== "done"),
+    ];
+    const all = includeDone
+      ? [...open, ...completed.filter((t) => t.status === "done")]
+      : open;
+    return sortByQuadrantOrderThenTime(all);
+  }, [todos, unscheduledTodos, completed, includeDone]);
 
   const createSpaceId = defaultSpaceId || spaces[0]?.id;
+  const canCreate = spaces.length > 0;
+
+  async function toggleDone(todo: TodoRow) {
+    if (toggling === todo.id) return;
+    setToggling(todo.id);
+    const nextDone = todo.status !== "done";
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from("todos")
+      .update(
+        nextDone
+          ? {
+              status: "done",
+              completed_by: user?.id ?? null,
+              completed_at: new Date().toISOString(),
+            }
+          : {
+              status: "todo",
+              completed_by: null,
+              completed_at: null,
+            },
+      )
+      .eq("id", todo.id);
+    setToggling(null);
+    if (error) alert(error.message);
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      {hideTitle ? null : (
-        <h2 className="text-sm font-medium text-zinc-800">{title}</h2>
-      )}
-      {drop.dropError ? (
-        <p className="text-xs text-red-600">{drop.dropError}</p>
+      {hideTitle || canCreate ? (
+        <div className="flex items-center justify-between gap-2">
+          {hideTitle ? null : (
+            <h2 className="text-sm font-medium text-zinc-800">{title}</h2>
+          )}
+          {canCreate ? (
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[var(--border-muted)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--brand-ink)] transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-soft)]"
+            >
+              ＋ 新建待办
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {columns.map((col) => (
-          <NotebookQuadrant
-            key={col.key}
-            title={col.title}
-            openCount={col.openCount}
-            doneCount={col.doneCount}
-            emptyHint={col.emptyHint}
-            isEmpty={col.items.length === 0}
-            dragOver={drop.dragOverKey === col.key}
-            onCreate={
-              createSpaceId
-                ? () =>
-                    setCreateFor({
-                      priority: isImportantKey(col.key) ? "high" : "low",
-                    })
-                : undefined
-            }
-            onDragOver={(e) => drop.onDragOverQuadrant(e, col.key)}
-            onDragLeave={drop.onDragLeaveQuadrant}
-            onDrop={(e) => void drop.onDropQuadrant(e, col.key)}
-          >
-            {col.items.map((t) => (
-              <CompactTodoCard
-                key={t.id}
-                todo={t}
-                variant="card"
-                layout="stack"
-                showComplete
-                importanceDrag
-                onToggleImportance={() => void drop.toggleImportance(t)}
-                conflicted={conflictIds.has(t.id)}
-                onOpen={() => {
-                  setScheduleHint(false);
-                  setSelected(t);
-                }}
-              />
-            ))}
-          </NotebookQuadrant>
-        ))}
-      </div>
-
-      {listed.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-600">
           {hiddenCount > 0 && onShowAll ? (
             <span className="flex flex-wrap items-center gap-2">
-              <span>该时间范围暂无未完成任务，你还有 {hiddenCount} 项任务排在其它的时间。</span>
+              <span>
+                该时间范围暂无未完成任务，你还有 {hiddenCount} 项任务排在其它的时间。
+              </span>
               <button
                 type="button"
                 onClick={onShowAll}
@@ -205,35 +149,119 @@ export function TodoListPanel({
             <span>该时间范围暂无未完成任务。</span>
           )}
         </div>
-      ) : null}
-
-      {unscheduledTodos.filter((t) => t.status !== "done").length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <p className="text-xs font-medium text-zinc-700">
-            未排期（{unscheduledTodos.filter((t) => t.status !== "done").length}）
-          </p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {unscheduledTodos
-              .filter((t) => t.status !== "done")
-              .map((t) => (
-                <CompactTodoCard
-                  key={t.id}
-                  todo={t}
-                  variant="card"
-                  layout="stack"
-                  showComplete
-                  importanceDrag
-                  onToggleImportance={() => void drop.toggleImportance(t)}
-                  conflicted={conflictIds.has(t.id)}
-                  onOpen={() => {
-                    setScheduleHint(false);
-                    setSelected(t);
-                  }}
-                />
-              ))}
-          </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-[var(--border-muted)] bg-white">
+          <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+            <thead>
+              <tr className="border-b border-[var(--border-muted)] bg-[var(--surface-muted)]/60 text-[var(--text-muted)]">
+                <th className="w-10 px-2 py-2 text-center font-medium">完成</th>
+                <th className="px-2 py-2 font-medium">标题</th>
+                <th className="w-16 px-2 py-2 font-medium">优先级</th>
+                <th className="w-44 px-2 py-2 font-medium">截止 / 时间</th>
+                <th className="w-28 px-2 py-2 font-medium">负责人</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((t) => {
+                const overdue = isOverdue(t, now);
+                const { text: assignee, extra } = assigneeLabel(t);
+                const conflicted = conflictIds.has(t.id);
+                const done = t.status === "done";
+                const accent = conflicted
+                  ? "#e85d5d"
+                  : PRIORITY_COLORS[t.priority] ?? "var(--text-muted)";
+                return (
+                  <tr
+                    key={t.id}
+                    onClick={() => setSelected(t)}
+                    className={[
+                      "cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50",
+                      done ? "opacity-60" : "",
+                      conflicted ? "bg-red-50/40" : "",
+                    ].join(" ")}
+                  >
+                    <td
+                      className="px-2 py-2 text-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        aria-label={done ? "标为未完成" : "标为完成"}
+                        disabled={toggling === t.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleDone(t);
+                        }}
+                        className={[
+                          "mx-auto flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                          done
+                            ? "border-zinc-900 bg-zinc-900 text-[10px] text-white"
+                            : "border-zinc-300 bg-white hover:border-zinc-900",
+                        ].join(" ")}
+                      >
+                        {done ? "✓" : null}
+                      </button>
+                    </td>
+                    <td className="px-2 py-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        {conflicted ? (
+                          <span className="shrink-0 rounded bg-red-100 px-1 text-[10px] font-medium text-red-600">
+                            冲突
+                          </span>
+                        ) : null}
+                        <span
+                          className={[
+                            "min-w-0 truncate font-medium",
+                            done
+                              ? "text-zinc-400 line-through"
+                              : "text-zinc-900",
+                          ].join(" ")}
+                          title={t.title}
+                        >
+                          {t.title}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="font-medium" style={{ color: accent }}>
+                        {PRIORITY_LABEL[t.priority] ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2">
+                      {overdue ? (
+                        <span className="mr-1 rounded bg-red-100 px-1 text-[10px] font-medium text-red-600">
+                          逾期
+                        </span>
+                      ) : null}
+                      <span
+                        className={[
+                          "tabular-nums",
+                          overdue
+                            ? "font-medium text-red-600"
+                            : "text-zinc-500",
+                        ].join(" ")}
+                        title={t.due_at ?? t.start_at ?? ""}
+                      >
+                        {formatTodoTimeLabel(t)}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-zinc-600">
+                      <span className="block truncate" title={assignee}>
+                        {assignee}
+                      </span>
+                      {extra > 0 ? (
+                        <span className="text-[10px] text-zinc-400">
+                          +{extra}
+                        </span>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      ) : null}
+      )}
 
       {selected ? (
         <TodoEditor
@@ -241,18 +269,14 @@ export function TodoListPanel({
           members={members}
           canAssign={canAssign}
           open
-          hintMessage={scheduleHint ? SCHEDULE_HINT : undefined}
-          onClose={() => {
-            setSelected(null);
-            setScheduleHint(false);
-          }}
+          onClose={() => setSelected(null)}
         />
       ) : null}
 
-      {createFor && createSpaceId ? (
+      {createOpen && createSpaceId ? (
         <Modal
           open
-          onClose={() => setCreateFor(null)}
+          onClose={() => setCreateOpen(false)}
           title="新建待办"
           zClass="z-[80]"
           overlayClassName="flex items-start justify-center overflow-y-auto p-4 pt-[8vh]"
@@ -264,20 +288,19 @@ export function TodoListPanel({
               <button
                 type="button"
                 className="rounded px-2 py-1 text-sm text-zinc-500"
-                onClick={() => setCreateFor(null)}
+                onClick={() => setCreateOpen(false)}
               >
                 关闭
               </button>
             </div>
             <QuickCreateTodo
-              key={`${createSpaceId}-${createFor.priority}`}
+              key={`${createSpaceId}`}
               spaces={spaces}
               defaultSpaceId={createSpaceId}
               members={members}
               canAssign={canAssign}
-              initialPriority={createFor.priority}
               bare
-              onCreated={() => setCreateFor(null)}
+              onCreated={() => setCreateOpen(false)}
             />
           </div>
         </Modal>

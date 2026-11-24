@@ -34,8 +34,16 @@ export type TodoRow = {
   duration_minutes?: number | null;
   /** 自定义展示/日历色 */
   color?: string | null;
-  /** 任务所属部门；未选择时为「通用」 */
-  department?: string | null;
+  /** 四象限手动归属；非空时覆盖 todoQuadrant 的自动计算 */
+  manual_quadrant?: QuadrantKey | null;
+  /** 象限内手动排序（升序）；null 表示未手动排序，按时间兜底 */
+  quadrant_order?: number | null;
+  /** AI 排序写入的紧急度分；非空时列表优先按此降序排，空则回退手动/时间 */
+  sort_score?: number | null;
+  /** 重复规则（RFC 5545 RRULE 子集），如 FREQ=DAILY；null=不重复 */
+  rrule?: string | null;
+  /** 同系列循环实例归组 id */
+  series_id?: string | null;
   spaces: {
     id: string;
     name: string;
@@ -51,11 +59,11 @@ export type SpaceMemberOption = {
 };
 
 export const TODO_SELECT =
-  "id, title, description, priority, status, start_at, end_at, is_all_day, due_at, duration_minutes, department, space_id, creator_id, parent_todo_id, completed_by, completed_at, color, spaces(id, name, kind), todo_assignees(user_id, profiles(display_name, email))";
+  "id, title, description, priority, status, start_at, end_at, is_all_day, due_at, duration_minutes, manual_quadrant, quadrant_order, sort_score, space_id, creator_id, parent_todo_id, completed_by, completed_at, color, rrule, series_id, spaces(id, name, kind), todo_assignees(user_id, profiles(display_name, email))";
 
 /** 日历/首屏：去掉 description / 完成态 / email；编辑器打开时再拉详情 */
 export const TODO_SELECT_LEAN =
-  "id, title, priority, status, start_at, end_at, is_all_day, due_at, duration_minutes, department, space_id, creator_id, parent_todo_id, color, spaces(id, name, kind), todo_assignees(user_id, profiles(display_name))";
+  "id, title, priority, status, start_at, end_at, is_all_day, due_at, duration_minutes, manual_quadrant, quadrant_order, sort_score, space_id, creator_id, parent_todo_id, color, rrule, series_id, spaces(id, name, kind), todo_assignees(user_id, profiles(display_name))";
 
 export type SpaceNavItem = {
   id: string;
@@ -92,6 +100,34 @@ export const STATUS_COLORS: Record<string, string> = {
   in_progress: "#4a9eda",
   done: "#3db87a",
 };
+
+/** 重复任务下拉选项（value 即落库的 rrule 串；DB 触发器解析 FREQ + INTERVAL） */
+export const RECUR_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "不重复" },
+  { value: "FREQ=DAILY", label: "每天" },
+  { value: "FREQ=WEEKLY", label: "每周" },
+  { value: "FREQ=WEEKLY;INTERVAL=2", label: "每两周" },
+  { value: "FREQ=MONTHLY", label: "每月" },
+];
+
+/** rrule → 中文标签（用于卡片/列表的循环徽标）；不识别则兜底「循环」 */
+export function rruleLabel(rrule: string | null | undefined): string | null {
+  if (!rrule) return null;
+  const freq = /FREQ=([A-Za-z]+)/i.exec(rrule)?.[1]?.toUpperCase();
+  const interval = parseInt(/INTERVAL=([0-9]+)/i.exec(rrule)?.[1] || "1", 10) || 1;
+  switch (freq) {
+    case "DAILY":
+      return "每天";
+    case "WEEKLY":
+      return interval === 2 ? "每两周" : interval > 1 ? `每${interval}周` : "每周";
+    case "MONTHLY":
+      return "每月";
+    case "YEARLY":
+      return "每年";
+    default:
+      return "循环";
+  }
+}
 
 /** 跨自然日排期（用于卡片渐变区分） */
 export function isCrossDayTodo(todo: TodoRow): boolean {
@@ -380,6 +416,28 @@ export function isAssignedToUser(
   return (todo.todo_assignees ?? []).some((a) => a.user_id === userId);
 }
 
+/**
+ * 前端可见性判断，严格对齐 RLS 函数 can_see_todo（SECURITY DEFINER）：
+ *   1) 空间 owner/admin
+ *   2) 创建人 (t.creator_id)
+ *   3) 被指派人 (todo_assignees)
+ * 注意：RLS 不再给普通成员 blanket 可见（成员仅见自己创建/被指派），
+ * 故此处也只按这三类判断。历史上曾保留 isSpaceMember 分支（成员看全部），
+ * 与 2026-11-03 收紧后的 RLS 矛盾——虽因查询都走认证客户端（RLS 兜底）
+ * 不会真实泄漏，但语义相反、易误导后续改动，已删除。
+ */
+export function canViewerSeeTodo(
+  todo: TodoRow,
+  opts: {
+    currentUserId?: string | null;
+    isOwnerOrAdmin: boolean;
+  },
+): boolean {
+  if (opts.isOwnerOrAdmin) return true;
+  if (opts.currentUserId && todo.creator_id === opts.currentUserId) return true;
+  return isAssignedToUser(todo, opts.currentUserId);
+}
+
 /** 展示用：重要 / 不重要（DB 仍用 high | medium | low） */
 export const PRIORITY_LABEL: Record<string, string> = {
   high: "重要",
@@ -473,5 +531,63 @@ export function todoQuadrant(
   if (urgent && !important) return "urgent_normal";
   if (!urgent && important) return "important";
   return "normal";
+}
+
+/**
+ * 任务实际所属象限：若用户手动摆放过（manual_quadrant 非空）则优先采用，
+ * 否则回退到按时间/重要性自动计算。用于四象限拖拽后锁定位置。
+ */
+export function effectiveQuadrant(
+  todo: Pick<
+    TodoRow,
+    "due_at" | "start_at" | "priority" | "status" | "manual_quadrant"
+  >,
+  nowMs = Date.now(),
+  opts?: { includeDone?: boolean },
+): QuadrantKey {
+  if (todo.manual_quadrant) return todo.manual_quadrant;
+  return todoQuadrant(todo, nowMs, opts);
+}
+
+/**
+ * 象限内排序：手动顺序优先（quadrant_order 升序，null 排在最后），
+ * 同序或都未手动排序时按时间兜底。保证手动拖拽的先后稳定。
+ */
+export function sortByQuadrantOrderThenTime(list: TodoRow[]): TodoRow[] {
+  const scoreOf = (t: TodoRow): number | null =>
+    typeof t.sort_score === "number" ? t.sort_score : null;
+  return [...list].sort((a, b) => {
+    // 已完成沉底（保持原有语义）
+    const ad = a.status === "done" ? 1 : 0;
+    const bd = b.status === "done" ? 1 : 0;
+    if (ad !== bd) return ad - bd;
+    // 紧急度优先：AI 排序写入的 sort_score，越大越靠前（逾期未完成最高）
+    const as = scoreOf(a);
+    const bs = scoreOf(b);
+    if (as != null && bs != null) return bs - as;
+    if (as != null) return -1;
+    if (bs != null) return 1;
+    // 回退：手动顺序 → 时间
+    const ao = a.quadrant_order;
+    const bo = b.quadrant_order;
+    if (ao != null && bo != null) {
+      if (ao !== bo) return ao - bo;
+    } else if (ao != null) {
+      return -1;
+    } else if (bo != null) {
+      return 1;
+    }
+    const at = a.start_at
+      ? new Date(a.start_at).getTime()
+      : a.due_at
+        ? new Date(a.due_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+    const bt = b.start_at
+      ? new Date(b.start_at).getTime()
+      : b.due_at
+        ? new Date(b.due_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+    return at - bt;
+  });
 }
 

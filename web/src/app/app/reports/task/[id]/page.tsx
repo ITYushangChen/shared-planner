@@ -54,15 +54,22 @@ export default async function ReportTaskDetailPage({ params }: Props) {
         ? "in_progress"
         : "todo";
   const category = taskCategory(t.title);
-  const description =
-    t.description?.trim() ||
-    generateTaskDescription(t.title, status, category);
   const dayIso = t.completed_at
     ? localDateKey(new Date(t.completed_at))
     : t.start_at
       ? localDateKey(new Date(t.start_at))
       : null;
   const dayLabel = dayIso ? dayIso.slice(5).replace("-", "/") : "待排期";
+  const description =
+    t.description?.trim() ||
+    generateTaskDescription(t.title, status, category, {
+      spaceName: space?.name,
+      timeLabel:
+        status === "done" && dayIso ? `完成于 ${dayLabel}` : dayLabel,
+      assignees: (t.todo_assignees ?? [])
+        .map((a) => a.profiles?.display_name?.trim() || "")
+        .filter(Boolean),
+    });
   const progressLabel =
     status === "done" ? "已完成" : status === "in_progress" ? "进行中" : "未开始";
 
@@ -153,12 +160,6 @@ export default async function ReportTaskDetailPage({ params }: Props) {
               <dd className="text-[var(--brand-ink)]">
                 {categoryLabel(category)}
               </dd>
-            </div>
-            <div className="flex items-start gap-3">
-              <dt className="w-16 shrink-0 text-xs text-[var(--text-muted)]">
-                部门
-              </dt>
-              <dd className="text-[var(--brand-ink)]">{t.department || "通用"}</dd>
             </div>
           </dl>
         </section>
