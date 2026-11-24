@@ -1128,7 +1128,6 @@ export function TodosCalendar({
               taskOpacity < 0.999
             ) {
               const raw =
-                (arg.event.extendedProps.quadrantBg as string | undefined) ||
                 (arg.event.extendedProps.solidColor as string | undefined) ||
                 arg.event.backgroundColor ||
                 "#5cb88a";

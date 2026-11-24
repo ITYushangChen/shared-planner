@@ -221,16 +221,7 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
   return todos
     .filter((t) => t.start_at)
     .map((t) => {
-      const hasCustomColor =
-        !!t.color && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(t.color);
-      // 自定义色优先；否则按四象限（手动归属优先，回退自动计算）取浅底深字
-      const quadrant = hasCustomColor ? null : effectiveQuadrant(t);
-      const qc = quadrant ? QUADRANT_HEX[quadrant] : null;
-      const color = hasCustomColor
-        ? t.color!
-        : qc
-          ? qc.bg
-          : resolveTodoColor(t.color, t.priority, uiPrefs);
+      const color = resolveTodoColor(t.color, t.priority, uiPrefs);
       const fill =
         taskOpacity >= 0.999 ? color : hexToRgba(color, taskOpacity);
       const spaceName = t.spaces?.name?.trim();
@@ -251,12 +242,10 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
         end: allDayRange ? allDayRange.end : t.end_at || undefined,
         allDay: t.is_all_day,
         backgroundColor: fill,
-        borderColor: qc
-          ? qc.border
-          : urgent
-            ? hexToRgba("#e85d5d", Math.min(1, taskOpacity + 0.05))
-            : fill,
-        textColor: qc ? qc.fg : todoPriorityTextColor(t.priority),
+        borderColor: urgent
+          ? hexToRgba("#e85d5d", Math.min(1, taskOpacity + 0.05))
+          : fill,
+        textColor: todoPriorityTextColor(t.priority),
         extendedProps: {
           spaceId: t.space_id,
           spaceName: spaceName ?? "空间",
@@ -266,8 +255,7 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
           urgent,
           parentTodoId: t.parent_todo_id ?? null,
           color: t.color ?? null,
-          solidColor: qc ? qc.fg : color,
-          quadrantBg: qc ? qc.bg : null,
+          solidColor: color,
           todoTitle: t.title,
           assignees: (t.todo_assignees ?? [])
             .map(
@@ -526,20 +514,6 @@ export const QUADRANT_LABEL: Record<QuadrantKey, string> = {
   urgent_normal: "紧急 · 不重要",
   important: "重要 · 不紧急",
   normal: "不重要 · 不紧急",
-};
-
-/**
- * 四象限事件块配色（hex 对齐 globals.css 的 --qd-* 变量，浅底 + 同色深字）。
- * 仅用于日历事件块：bg 作主体浅底、fg 作深色文字、border 作描边。
- */
-export const QUADRANT_HEX: Record<
-  QuadrantKey,
-  { bg: string; fg: string; border: string }
-> = {
-  urgent_important: { bg: "#fbeaea", fg: "#c0392b", border: "#f3c9c9" },
-  important: { bg: "#e6f1fb", fg: "#185fa5", border: "#c8dcef" },
-  urgent_normal: { bg: "#fdf1e3", fg: "#d97a1f", border: "#f5d9b3" },
-  normal: { bg: "#f0f2f4", fg: "#6b7280", border: "#dfe3e8" },
 };
 
 /** 2×2 展示顺序：左上紧急重要、右上紧急不重要、左下重要不紧急、右下不重要不紧急 */
