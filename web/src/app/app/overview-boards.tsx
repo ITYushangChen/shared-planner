@@ -21,6 +21,7 @@ import { CompactTodoCard } from "./compact-todo-card";
 import {
   NOTEBOOK_QUADRANT_META,
   NOTEBOOK_QUADRANT_ORDER,
+  QUADRANT_COLOR,
   NotebookQuadrant,
 } from "./notebook-quadrant";
 import { chipClass } from "./ui-btn-class";
@@ -128,6 +129,7 @@ export function OverviewBoards({
     spaceId: string;
     priority: "high" | "low";
   } | null>(null);
+  const [layout, setLayout] = useState<"grid" | "list">("grid");
   const conflictIds = useMemo(() => findConflictTodoIds(todos), [todos]);
 
   const completed = useMemo(() => {
@@ -271,6 +273,116 @@ export function OverviewBoards({
 
       {isQuadrant ? (
         <>
+          <div className="flex items-center justify-end">
+            <div className="inline-flex rounded-lg bg-[var(--surface-muted)] p-0.5">
+              <button
+                type="button"
+                onClick={() => setLayout("grid")}
+                className={[
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  layout === "grid"
+                    ? "bg-white text-[var(--brand-ink)] shadow-sm"
+                    : "text-[var(--text-muted)]",
+                ].join(" ")}
+              >
+                矩阵
+              </button>
+              <button
+                type="button"
+                onClick={() => setLayout("list")}
+                className={[
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  layout === "list"
+                    ? "bg-white text-[var(--brand-ink)] shadow-sm"
+                    : "text-[var(--text-muted)]",
+                ].join(" ")}
+              >
+                列表
+              </button>
+            </div>
+          </div>
+
+          {layout === "list" ? (
+            <div className="flex flex-col gap-4">
+              {NOTEBOOK_QUADRANT_ORDER.map((key) => {
+                const col = boardColumns.find((c) => c.key === key);
+                const todosIn = col?.todos ?? [];
+                const c = QUADRANT_COLOR[key];
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-xl border bg-white"
+                    style={{ borderColor: c.border }}
+                    onDragOver={(e) => drop.onDragOverQuadrant(e, key)}
+                    onDragLeave={drop.onDragLeaveQuadrant}
+                    onDrop={(e) =>
+                      void drop.onDropQuadrant(
+                        e,
+                        key,
+                        todosIn.map((t) => t.id),
+                      )
+                    }
+                  >
+                    <div
+                      className="flex items-center justify-between px-3 py-2"
+                      style={{ backgroundColor: c.bg }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: c.fg }}
+                        />
+                        <p
+                          className="text-sm font-semibold"
+                          style={{ color: c.fg }}
+                        >
+                          {QUADRANT_LABEL[key]}
+                        </p>
+                      </div>
+                      <span
+                        className="text-xs tabular-nums"
+                        style={{ color: c.fg }}
+                      >
+                        {todosIn.length}
+                      </span>
+                    </div>
+                    {todosIn.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-xs text-[var(--text-muted)]">
+                        暂无任务
+                      </p>
+                    ) : (
+                      <div className="flex flex-col">
+                        {todosIn.map((todo) => (
+                          <CompactTodoCard
+                            key={todo.id}
+                            todo={todo}
+                            testId="quadrant-todo-card"
+                            showComplete
+                            importanceDrag
+                            onToggleImportance={() =>
+                              void drop.toggleImportance(todo)
+                            }
+                            onCardDrop={(e, position) =>
+                              void drop.onDropOnCard(
+                                e,
+                                key,
+                                todosIn.map((t) => t.id),
+                                todo.id,
+                                position,
+                              )
+                            }
+                            conflicted={conflictIds.has(todo.id)}
+                            onOpen={() => setSelected(todo)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <>
           {/* 手机：笔记本四象限（竖排） */}
           <div className="flex flex-col gap-3 sm:hidden">
             {NOTEBOOK_QUADRANT_ORDER.map((key) => {
@@ -284,6 +396,7 @@ export function OverviewBoards({
               return (
                 <NotebookQuadrant
                   key={key}
+                  quadrantKey={key}
                   title={meta.title}
                   openCount={openCount}
                   doneCount={doneCount}
@@ -341,7 +454,9 @@ export function OverviewBoards({
 
           {/* 桌面/平板：2×2 四象限（每行两个） */}
           <div className="hidden gap-3 sm:grid sm:grid-cols-2">
-            {boardColumns.map((col) => (
+            {boardColumns.map((col) => {
+              const c = QUADRANT_COLOR[col.key as QuadrantKey];
+              return (
               <div
                 key={col.key}
                 onDragOver={(e) => drop.onDragOverQuadrant(e, col.key)}
@@ -354,35 +469,50 @@ export function OverviewBoards({
                   )
                 }
                 className={[
-                  "flex min-h-[220px] flex-col rounded-xl border bg-[var(--surface-muted)]/50 transition-colors",
-                  col.key.startsWith("urgent")
-                    ? "border-red-200/80"
-                    : "border-[var(--border-muted)]",
-                  drop.dragOverKey === col.key
-                    ? "border-brand bg-brand-soft/40 ring-2 ring-brand/30"
-                    : "",
+                  "flex min-h-[220px] flex-col rounded-xl border transition-colors",
+                  drop.dragOverKey === col.key ? "ring-2 ring-brand/40" : "",
                 ].join(" ")}
+                style={{
+                  backgroundColor: c.bg,
+                  borderColor:
+                    drop.dragOverKey === col.key ? undefined : c.border,
+                }}
               >
-                <div className="border-b border-[var(--border-muted)] bg-white/90 px-3 py-2.5">
+                <div
+                  className="px-3 py-2.5"
+                  style={{ borderBottom: `1px solid ${c.border}` }}
+                >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[var(--brand-ink)]">
+                      <p
+                        className="truncate text-sm font-semibold"
+                        style={{ color: c.fg }}
+                      >
                         {col.label}
                       </p>
                       {col.hint ? (
-                        <p className="text-[11px] text-[var(--text-muted)]">
+                        <p
+                          className="text-[11px]"
+                          style={{ color: c.fg, opacity: 0.75 }}
+                        >
                           {col.hint}
                         </p>
                       ) : null}
                     </div>
-                    <span className="shrink-0 text-xs tabular-nums text-[var(--text-muted)]">
+                    <span
+                      className="shrink-0 text-xs tabular-nums"
+                      style={{ color: c.fg }}
+                    >
                       {col.todos.length}
                     </span>
                   </div>
                 </div>
                 <div className="flex max-h-[min(50vh,420px)] flex-col gap-2 overflow-y-auto p-2">
                   {col.todos.length === 0 ? (
-                    <p className="px-1 py-8 text-center text-xs text-[var(--text-muted)]">
+                    <p
+                      className="px-1 py-8 text-center text-xs"
+                      style={{ color: c.fg, opacity: 0.7 }}
+                    >
                       空 · 可拖入改为
                       {col.key === "urgent_important" ||
                       col.key === "important"
@@ -417,8 +547,11 @@ export function OverviewBoards({
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
+            </>
+          )}
         </>
       ) : isColumnBoard ? (
         <div className="flex gap-3 overflow-x-auto pb-2">

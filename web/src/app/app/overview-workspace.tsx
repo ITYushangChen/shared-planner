@@ -75,7 +75,7 @@ type OverviewTab = "boards" | "calendar" | "list";
 function parseTab(raw: string | null): OverviewTab {
   if (raw === "boards") return "boards";
   if (raw === "list") return "list";
-  return "calendar";
+  return "boards"; // 首页默认四象限看板
 }
 
 function parseRange(raw: string | null): OverviewRange | "all" {
