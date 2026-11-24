@@ -6,7 +6,13 @@ import { aiCreateTodosRouter } from "./routes/ai-create-todos";
 import { aiReorderRouter } from "./routes/ai-reorder";
 import { aiScheduleRouter } from "./routes/ai-schedule";
 import { aiReportPlainRouter } from "./routes/ai-report-plain";
+import { knowledgeRouter } from "./routes/knowledge";
+import { studyRouter } from "./routes/study";
+import { docsRouter } from "./routes/docs";
 import { dailySummaryRouter } from "./routes/daily-summary";
+import { dailyPlanPushRouter } from "./routes/daily-plan-push";
+import { feishuCardRouter } from "./routes/feishu-card";
+import { studyDailyCalibrationRouter } from "./routes/study-daily-calibration";
 
 assertRuntimeEnv();
 
@@ -33,8 +39,14 @@ app.use("/ai", aiScheduleRouter);
 app.use("/ai", aiReorderRouter);
 app.use("/ai", aiConflictSuggestRouter);
 app.use("/ai", aiReportPlainRouter);
+app.use("/ai", knowledgeRouter);
+app.use("/ai", studyRouter);
+app.use("/docs", docsRouter);
 app.use("/ai", dailySummaryRouter);
 app.use(dailySummaryRouter);
+app.use(dailyPlanPushRouter);
+app.use(feishuCardRouter);
+app.use(studyDailyCalibrationRouter);
 
 app.use(
   (

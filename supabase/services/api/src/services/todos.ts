@@ -12,6 +12,8 @@ export type ParsedTodo = {
   end_at?: string | null;
   due_at?: string | null;
   is_all_day?: boolean;
+  /** 预计时长（分钟）：日历按真实长度渲染，学习计划的每个块会带上 */
+  duration_minutes?: number | null;
 };
 
 export type TodoPreview = ParsedTodo & {
@@ -37,11 +39,11 @@ export async function insertTodosWithAssignees(params: {
         description: item.description ?? null,
         priority: item.priority || "medium",
         status: "todo" as TodoStatus,
-        department: "通用",
         start_at: item.start_at || null,
         end_at: item.end_at || null,
         due_at: item.due_at || null,
         is_all_day: Boolean(item.is_all_day),
+        duration_minutes: item.duration_minutes ?? null,
         source: "ai",
       })
       .select("id")
@@ -109,14 +111,21 @@ export function computeSortScore(todo: {
 }): number {
   if (todo.status === "done") return -1;
   const now = Date.now();
-  let score = priorityWeight(todo.priority) * 1000;
-
   const due = todo.due_at ? Date.parse(todo.due_at) : NaN;
-  if (!Number.isNaN(due)) {
-    const hours = (due - now) / 36e5;
-    score += Math.max(0, 500 - hours);
-  }
+  const hoursToDue = Number.isNaN(due)
+    ? Number.POSITIVE_INFINITY
+    : (due - now) / 36e5;
 
-  if (!todo.start_at) score += 50; // unscheduled slightly higher urgency to schedule
+  let score = 0;
+  if (hoursToDue < 0) {
+    // 已逾期未完成：全局第一排序键，逾期越久越靠前
+    score += 1_000_000 - hoursToDue; // -hoursToDue > 0
+  } else if (Number.isFinite(hoursToDue)) {
+    // 未逾期但有截止：越临近越靠前（封顶 100000）
+    score += Math.max(0, 100_000 - hoursToDue * 100);
+  }
+  // 优先级降为次级权重（高+30 / 中+20 / 低+10），仅作同档区分
+  score += priorityWeight(todo.priority) * 10;
+  if (!todo.start_at) score += 1; // 未排期略优先于已排期（同档内）
   return Math.round(score * 100) / 100;
 }

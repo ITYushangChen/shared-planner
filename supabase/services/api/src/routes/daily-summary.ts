@@ -1,40 +1,95 @@
 import { Router } from "express";
 import { z } from "zod";
-import { chatText } from "../lib/deepseek";
+import { dayBounds } from "../lib/day-bounds";
 import { assertSpaceMember } from "../lib/space";
+import { priorityWeight } from "../services/todos";
 import { createAdminClient } from "../lib/supabase";
 import type { AuthedRequest } from "../middleware/auth";
 import { requireAuth, requireCronSecret } from "../middleware/auth";
 
-function dayBounds(timezone: string, date = new Date()) {
-  // Approximate local day bounds using Intl parts → reconstruct UTC range via offset trick
-  const fmt = new Intl.DateTimeFormat("en-CA", {
+type SumTodo = {
+  id: string;
+  title: string | null;
+  priority: string | null;
+  status: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  due_at: string | null;
+};
+
+function isHighPriority(priority: string | null | undefined): boolean {
+  return priority === "high";
+}
+
+// 按用户时区把 ISO 时间格式化为 YYYY-MM-DD
+function tzYmd(timezone: string, iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  });
-  const localDate = fmt.format(date); // YYYY-MM-DD
-  const start = new Date(`${localDate}T00:00:00`);
-  const end = new Date(`${localDate}T23:59:59.999`);
+  }).format(new Date(iso));
+}
 
-  // Convert "wall time in timezone" to UTC using a formatter offset estimate
-  const toUtc = (wall: Date) => {
-    const asUtc = new Date(
-      wall.toLocaleString("en-US", { timeZone: "UTC" }),
-    ).getTime();
-    const asTz = new Date(
-      wall.toLocaleString("en-US", { timeZone: timezone }),
-    ).getTime();
-    const offset = asTz - asUtc;
-    return new Date(wall.getTime() - offset);
-  };
+// 相对日期描述：明天 / 后天 / X 月 X 日
+function relDateLabel(timezone: string, iso: string, localDate: string): string {
+  const ymd = tzYmd(timezone, iso);
+  const diffDays = Math.round(
+    (new Date(ymd + "T00:00:00Z").getTime() -
+      new Date(localDate + "T00:00:00Z").getTime()) /
+      86400000,
+  );
+  if (diffDays <= 1) return "明天";
+  if (diffDays === 2) return "后天";
+  const [, m, d] = ymd.split("-");
+  return `${Number(m)} 月 ${Number(d)} 日`;
+}
 
-  return {
-    localDate,
-    startIso: toUtc(start).toISOString(),
-    endIso: toUtc(end).toISOString(),
-  };
+// 按固定模板拼接待办摘要（确定性格式，不依赖模型自由发挥）
+function buildSummaryText(opts: {
+  localDate: string;
+  timezone: string;
+  today: SumTodo[];
+  overdue: SumTodo[];
+  upcoming: SumTodo[];
+  unscheduled: SumTodo[];
+}): string {
+  const { today, overdue, upcoming, unscheduled, localDate, timezone } = opts;
+  const lines: string[] = [];
+
+  if (today.length === 0) {
+    lines.push("今天没有指派给你的任务。");
+  } else {
+    const names = today.map((t) => t.title || "未命名").join("、");
+    lines.push(`今天有 ${today.length} 条指派给你的任务：${names}。`);
+  }
+
+  if (overdue.length > 0) {
+    const prefix = today.length === 0 ? "但" : "另外";
+    const items = overdue.map((t) => {
+      const name = t.title || "未命名";
+      return isHighPriority(t.priority) ? `${name}（高优先级）` : name;
+    });
+    lines.push(
+      `${prefix}有 ${overdue.length} 条逾期未完成，需要重点处理：${items.join("、")}，请尽快安排。`,
+    );
+  }
+
+  if (upcoming.length > 0) {
+    const items = upcoming
+      .slice(0, 3)
+      .map((t) => `${relDateLabel(timezone, t.start_at!, localDate)}「${t.title || "未命名"}」`);
+    lines.push(`未来几天有排期：${items.join("，")}。`);
+  }
+
+  if (unscheduled.length === 0) {
+    lines.push("目前没有未排期的任务。");
+  } else {
+    const names = unscheduled.slice(0, 10).map((t) => t.title || "未命名").join("、");
+    lines.push(`目前有 ${unscheduled.length} 条未排期的任务：${names}。`);
+  }
+
+  return lines.join("\n");
 }
 
 async function buildSummaryForUser(params: {
@@ -57,7 +112,8 @@ async function buildSummaryForUser(params: {
   const { data: todos, error } = await query;
   if (error) throw new Error(error.message);
 
-  const today = (todos || []).filter((t) => {
+  const rows = (todos || []) as SumTodo[];
+  const today = rows.filter((t) => {
     if (t.start_at && t.start_at <= endIso && (t.end_at || t.start_at) >= startIso) {
       return true;
     }
@@ -65,32 +121,44 @@ async function buildSummaryForUser(params: {
     return false;
   });
 
-  const unscheduled = (todos || []).filter((t) => !t.start_at).slice(0, 10);
-
-  const text = await chatText({
-    system:
-      "你是 ShareTodo 的每日摘要助手。用简洁中文写 2～4 句今日提醒。输入列表均为「指派给当前用户」的待办，必须逐条点名标题，不要遗漏已排期项；并提醒未排期任务。不要用 Markdown 标题。",
-    user: JSON.stringify({
-      local_date: localDate,
-      timezone: params.timezone,
-      note: "以下任务均已指派给该用户，摘要必须覆盖",
-      today_scheduled: today.map((t) => ({
-        id: t.id,
-        title: t.title,
-        priority: t.priority,
-        start_at: t.start_at,
-        end_at: t.end_at,
-        due_at: t.due_at,
-      })),
-      unscheduled_assigned_to_me: unscheduled.map((t) => ({
-        id: t.id,
-        title: t.title,
-        priority: t.priority,
-      })),
-    }),
+  // 逾期：排期/截止落在今天之前且未完成（不含今天）。这是最需要提醒的部分。
+  const overdue = rows.filter((t) => {
+    const past = t.start_at
+      ? t.start_at < startIso
+      : t.due_at
+      ? t.due_at < startIso
+      : false;
+    return past;
   });
 
-  return { localDate, text, todayCount: today.length, todos: today };
+  // 未来已排期（今天之后），给一个最近预告，避免"什么都没有"的错觉
+  const upcoming = rows.filter((t) => t.start_at && t.start_at > endIso);
+
+  const unscheduled = rows.filter((t) => !t.start_at);
+
+  // 排序：今天/未来按时间升序，逾期按优先级降序（高优在前）
+  const byTime = (a: SumTodo, b: SumTodo) =>
+    (a.start_at || a.due_at || "").localeCompare(b.start_at || b.due_at || "");
+  today.sort(byTime);
+  upcoming.sort(byTime);
+  overdue.sort((a, b) => priorityWeight(b.priority) - priorityWeight(a.priority));
+
+  const text = buildSummaryText({
+    localDate,
+    timezone: params.timezone,
+    today,
+    overdue,
+    upcoming,
+    unscheduled,
+  });
+
+  return {
+    localDate,
+    text,
+    todayCount: today.length,
+    overdueCount: overdue.length,
+    todos: today,
+  };
 }
 
 export const dailySummaryRouter = Router();
@@ -182,7 +250,7 @@ dailySummaryRouter.post(
           userId: p.id,
           timezone: p.timezone || "Asia/Shanghai",
         });
-        if (summary.todayCount === 0 && summary.text.length < 5) continue;
+        if (summary.todayCount === 0 && summary.overdueCount === 0 && summary.text.length < 5) continue;
 
         const { error: nErr } = await admin.from("notifications").insert({
           user_id: p.id,
