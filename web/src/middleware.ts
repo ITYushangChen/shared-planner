@@ -105,6 +105,15 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // ⚠️ 页面 HTML 一律 no-store（2026-11-24）：整页加载必须拿到最新 HTML，
+  // 才能引用到最新的 content-hash chunk。此前页面 HTML 没有任何缓存头，
+  // 浏览器（尤其微信 WebView）会 heuristic 缓存旧 HTML，导致「改了代码但手机
+  // 仍显示旧界面」。RSC / 路由预取请求在上面已提前 return，不受影响。
+  supabaseResponse.headers.set(
+    "Cache-Control",
+    "no-store, max-age=0, must-revalidate",
+  );
+
   return supabaseResponse;
 }
 

@@ -74,8 +74,9 @@ type OverviewTab = "boards" | "calendar" | "list";
 
 function parseTab(raw: string | null): OverviewTab {
   if (raw === "boards") return "boards";
+  if (raw === "calendar") return "calendar";
   if (raw === "list") return "list";
-  return "calendar";
+  return "boards"; // 首页默认四象限看板
 }
 
 function parseRange(raw: string | null): OverviewRange | "all" {
@@ -98,9 +99,11 @@ export function OverviewWorkspace({
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const tab = parseTab(searchParams.get("view"));
+  const rawTab = parseTab(searchParams.get("view"));
   const range = parseRange(searchParams.get("range"));
   const assigneeId = searchParams.get("assignee") || "";
+  const [isMobile, setIsMobile] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [membersBySpace, setMembersBySpace] = useState(membersBySpaceProp);
   const [scheduledExtra, setScheduledExtra] = useState<TodoRow[]>([]);
   const [unscheduledExtra, setUnscheduledExtra] = useState<TodoRow[]>([]);
@@ -114,6 +117,27 @@ export function OverviewWorkspace({
   const [removedIds, setRemovedIds] = useState(() => new Set<string>());
   const rangeFetchKeyRef = useRef<string | null>(null);
   const unschedPropSigRef = useRef("");
+  // 手机端（≤767px）不再展示四象限看板：boards 一律落到待办列表；桌面不受影响
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  // 手机端首页「只看自己的待办」需要当前用户 id
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data } = await createClient().auth.getUser();
+      if (!cancelled) setCurrentUserId(data.user?.id ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const tab: OverviewTab =
+    isMobile && rawTab === "boards" ? "list" : rawTab;
   const spaceFilterIds = useMemo(() => {
     const raw = searchParams.get("spaces");
     if (!raw?.trim()) return [] as string[];
@@ -623,6 +647,17 @@ export function OverviewWorkspace({
     [assigneeId, spaceFilterIds],
   );
 
+  // 手机端首页「只看自己的待办」：自己创建的 + 指派给自己的；未取到用户时不过滤
+  const isOwnTodo = useCallback(
+    (t: TodoRow) => {
+      if (!currentUserId) return true;
+      return (
+        t.creator_id === currentUserId || isAssignedToUser(t, currentUserId)
+      );
+    },
+    [currentUserId],
+  );
+
   const filteredTodos = useMemo(
     () => filterTodos(todos),
     [todos, filterTodos],
@@ -701,7 +736,9 @@ export function OverviewWorkspace({
           aria-busy={scheduledRefreshing || undefined}
         >
           <TodosCalendar
-            todos={filteredScheduled}
+            todos={
+              isMobile ? filteredScheduled.filter(isOwnTodo) : filteredScheduled
+            }
             spaces={spaces}
             allowOverview
             membersBySpace={membersBySpace}
@@ -715,9 +752,16 @@ export function OverviewWorkspace({
 
       {tab === "list" ? (
         <TodoListPanel
-          todos={boardsOpen.filter((t) => t.start_at)}
-          completed={boardsDone.filter((t) => t.start_at)}
-          unscheduledTodos={filteredUnscheduled}
+          mobile={isMobile}
+          todos={(isMobile ? boardsOpen.filter(isOwnTodo) : boardsOpen).filter(
+            (t) => t.start_at,
+          )}
+          completed={(
+            isMobile ? boardsDone.filter(isOwnTodo) : boardsDone
+          ).filter((t) => t.start_at)}
+          unscheduledTodos={
+            isMobile ? filteredUnscheduled.filter(isOwnTodo) : filteredUnscheduled
+          }
           hiddenCount={hiddenCount}
           onShowAll={onShowAll}
           members={flatMembers}

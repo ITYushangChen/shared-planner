@@ -17,6 +17,8 @@ import {
   type TodoRow,
 } from "@/lib/todos";
 import { resolveTodoColor } from "@/lib/ui-prefs";
+import { RecurrenceField } from "./recurrence-field";
+import { useIsMobile } from "./use-is-mobile";
 import { TodoComments } from "./todo-comments";
 import { useUiPrefsOptional } from "./ui-prefs-provider";
 import { Modal } from "./ui-modal";
@@ -55,6 +57,7 @@ export function TodoEditor({
 }: Props) {
   const router = useRouter();
   const supabase = createClient();
+  const isMobile = useIsMobile();
   const uiPrefs = useUiPrefsOptional()?.globalPrefs;
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(todo.description ?? "");
@@ -76,6 +79,8 @@ export function TodoEditor({
   );
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  // 手机版「更多操作」折叠开关（保存常驻底部，危险/低频操作收进来）
+  const [moreOpen, setMoreOpen] = useState(false);
   const [splitCount, setSplitCount] = useState(2);
   const [durationMin, setDurationMin] = useState(60);
 
@@ -469,7 +474,14 @@ export function TodoEditor({
       onClose={onClose}
       title="编辑待办"
       zClass="z-[60]"
-      className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+      // 手机版照抄「快速创建」的底部弹窗（variant=bottom，不传 className，
+      // 直接用 Modal 里的 PANEL_BASE.bottom）；桌面版仍是原来的居中卡片。
+      variant={isMobile ? "bottom" : "center"}
+      className={
+        isMobile
+          ? undefined
+          : "max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+      }
     >
       <form onSubmit={onSave}>
         <div className="mb-3 flex items-center justify-between">
@@ -504,6 +516,7 @@ export function TodoEditor({
               onChange={(e) => setDescription(e.target.value)}
             />
           </label>
+          {/* 手机版：重要性 + 重复同排（状态已删）；桌面版：重要性 + 状态同排、重复单独一行 */}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-sm text-zinc-700">
               重要性
@@ -523,40 +536,49 @@ export function TodoEditor({
                 <option value="low">不重要</option>
               </select>
             </label>
-            <label className="text-sm text-zinc-700">
-              状态
-              <select
-                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-                value={status}
-                onChange={(e) =>
-                  setStatus(e.target.value as TodoRow["status"])
-                }
-              >
-                <option value="todo">待办</option>
-                <option value="in_progress">进行中</option>
-                <option value="done">已完成</option>
-              </select>
-            </label>
+            {!isMobile ? (
+              <label className="text-sm text-zinc-700">
+                状态
+                <select
+                  className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                  value={status}
+                  onChange={(e) =>
+                    setStatus(e.target.value as TodoRow["status"])
+                  }
+                >
+                  <option value="todo">待办</option>
+                  <option value="in_progress">进行中</option>
+                  <option value="done">已完成</option>
+                </select>
+              </label>
+            ) : null}
+            {isMobile ? (
+              <RecurrenceField value={rrule} onChange={setRrule} hint="" />
+            ) : null}
           </div>
 
-          <label className="text-sm text-zinc-700">
-            重复
-            <select
-              className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-              value={rrule}
-              onChange={(e) => setRrule(e.target.value)}
-            >
-              {RECUR_OPTIONS.map((o) => (
-                <option key={o.value || "none"} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-              {rrule && !RECUR_OPTIONS.some((o) => o.value === rrule) ? (
-                <option value={rrule}>自定义（{rrule}）</option>
-              ) : null}
-            </select>
-          </label>
+          {!isMobile ? (
+            <label className="text-sm text-zinc-700">
+              重复
+              <select
+                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                value={rrule}
+                onChange={(e) => setRrule(e.target.value)}
+              >
+                {RECUR_OPTIONS.map((o) => (
+                  <option key={o.value || "none"} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+                {rrule && !RECUR_OPTIONS.some((o) => o.value === rrule) ? (
+                  <option value={rrule}>自定义（{rrule}）</option>
+                ) : null}
+              </select>
+            </label>
+          ) : null}
 
+          {/* 手机版删掉整块颜色设置（原值照常保留、保存时写回）；桌面版不变 */}
+          {!isMobile ? (
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-0 flex-1 text-sm text-zinc-700">
               卡片/日历颜色
@@ -588,6 +610,7 @@ export function TodoEditor({
               </button>
             ) : null}
           </div>
+          ) : null}
 
           <label className="flex items-center gap-2 text-sm text-zinc-700">
             <input
@@ -610,7 +633,12 @@ export function TodoEditor({
             </label>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-2">
+              {/* 手机版只留「开始 + 时长」，结束时间由时长自动算出；桌面版仍是开始/结束两列 */}
+              <div
+                className={
+                  isMobile ? "flex flex-col gap-2" : "grid grid-cols-2 gap-2"
+                }
+              >
                 <label className="text-sm text-zinc-700">
                   开始
                   <input
@@ -632,15 +660,17 @@ export function TodoEditor({
                     }}
                   />
                 </label>
-                <label className="text-sm text-zinc-700">
-                  结束
-                  <input
-                    type="datetime-local"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-2 text-sm"
-                    value={endLocal}
-                    onChange={(e) => setEndLocal(e.target.value)}
-                  />
-                </label>
+                {!isMobile ? (
+                  <label className="text-sm text-zinc-700">
+                    结束
+                    <input
+                      type="datetime-local"
+                      className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-2 text-sm"
+                      value={endLocal}
+                      onChange={(e) => setEndLocal(e.target.value)}
+                    />
+                  </label>
+                ) : null}
               </div>
               <label className="text-sm text-zinc-700">
                 任务时长（分钟）
@@ -697,27 +727,29 @@ export function TodoEditor({
                 )}
               </div>
             </fieldset>
-          ) : (
+          ) : !isMobile ? (
             <p className="text-xs text-zinc-400">
               普通成员不能指定指派人；保存时不改动现有指派
             </p>
-          )}
+          ) : null}
 
           <TodoComments todoId={todo.id} />
 
-          {todo.parent_todo_id ? (
+          {/* 以下 3 条说明小字（子节点提示 / 完成于 / 拆段说明）手机版全部隐藏 */}
+          {todo.parent_todo_id && !isMobile ? (
             <p className="text-xs text-amber-700">
               这是长任务的分段，可单独改期 / 改指派
             </p>
           ) : null}
 
-          {todo.completed_at ? (
+          {todo.completed_at && !isMobile ? (
             <p className="text-xs text-zinc-500">
               完成于 {new Date(todo.completed_at).toLocaleString()}
             </p>
           ) : null}
 
-          {!todo.parent_todo_id ? (
+          {/* 手机版删掉整块拆段操作（含拆分数与按钮）；桌面版照旧显示 */}
+          {!todo.parent_todo_id && !isMobile ? (
             <div className="flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-zinc-200 p-3">
               <label className="text-xs text-zinc-500">
                 拆分为
@@ -739,49 +771,109 @@ export function TodoEditor({
               >
                 拆分长任务
               </button>
-              <p className="w-full text-[10px] text-zinc-400">
-                均分原时段为子任务，父任务回到待排期；各段可单独拖动
-              </p>
+              {!isMobile ? (
+                <p className="w-full text-[10px] text-zinc-400">
+                  均分原时段为子任务，父任务回到待排期；各段可单独拖动
+                </p>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="submit"
-              data-testid="todo-editor-save"
-              disabled={loading}
-              className="rounded-xl bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-50"
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              disabled={loading || status === "done"}
-              onClick={onComplete}
-              className="rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
-            >
-              标记完成
-            </button>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={onClearSchedule}
-              className="rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
-            >
-              取消排期
-            </button>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={onDelete}
-              className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600"
-            >
-              删除
-            </button>
-          </div>
-          <div aria-live="polite" role="status">
-            {msg ? <p className="text-sm text-zinc-600">{msg}</p> : null}
-          </div>
+          {/* 手机版：保存常驻底部，其余三个收进「更多操作」；桌面版仍是原来的四按钮平铺 */}
+          {isMobile ? (
+            <>
+              {msg ? (
+                <div aria-live="polite" role="status">
+                  <p className="text-sm text-zinc-600">{msg}</p>
+                </div>
+              ) : null}
+              <div className="sticky bottom-0 -mx-5 -mb-5 mt-1 flex flex-col gap-2 border-t border-zinc-200 bg-white px-5 py-3">
+                <button
+                  type="submit"
+                  data-testid="todo-editor-save"
+                  disabled={loading}
+                  className="w-full rounded-xl bg-zinc-900 px-3 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className="w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm text-zinc-600"
+                >
+                  更多操作{moreOpen ? "（收起）" : ""}
+                </button>
+                {moreOpen ? (
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={loading || status === "done"}
+                      onClick={onComplete}
+                      className="w-full rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
+                    >
+                      标记完成
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={onClearSchedule}
+                      className="w-full rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
+                    >
+                      取消排期
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={onDelete}
+                      className="w-full rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                data-testid="todo-editor-save"
+                disabled={loading}
+                className="rounded-xl bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                disabled={loading || status === "done"}
+                onClick={onComplete}
+                className="rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
+              >
+                标记完成
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={onClearSchedule}
+                className="rounded-xl border border-[#2f5f8f]/55 px-3 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7] disabled:opacity-50"
+              >
+                取消排期
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={onDelete}
+                className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600"
+              >
+                删除
+              </button>
+            </div>
+          )}
+          {!isMobile ? (
+            <div aria-live="polite" role="status">
+              {msg ? <p className="text-sm text-zinc-600">{msg}</p> : null}
+            </div>
+          ) : null}
         </div>
       </form>
     </Modal>

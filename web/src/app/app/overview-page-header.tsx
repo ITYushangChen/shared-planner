@@ -113,7 +113,7 @@ export function OverviewPageHeader({
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-[var(--border-muted)] px-4 py-2 md:px-6 md:py-3">
       {showPeople ? (
-        <label className="flex min-w-0 items-center gap-1.5 text-xs text-[var(--text-muted)]">
+        <label className="hidden min-w-0 items-center gap-1.5 text-xs text-[var(--text-muted)] md:flex">
           <span className="shrink-0">人员</span>
           <select
             className="max-w-[10rem] rounded-lg border border-[var(--border-muted)] bg-white px-2 py-1.5 text-sm text-[var(--brand-ink)] outline-none focus:border-brand sm:max-w-[14rem]"

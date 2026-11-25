@@ -5,6 +5,7 @@ import {
   visibleSpaceNav,
 } from "@/lib/app-data";
 import { DeferredAppSidebar } from "./deferred-app-sidebar";
+import { BottomNav } from "./bottom-nav";
 import { HydrateSpacePrefs } from "./hydrate-space-prefs";
 
 const SPACE_SELECT =
@@ -64,6 +65,8 @@ export async function AppSidebarSlot({
         spacePrefsById={spacePrefsById}
         timezone={profileData?.timezone ?? undefined}
       />
+      {/* 移动端底部 5tab（桌面 md:hidden）；复用同一次空间拉取，不重复请求 */}
+      <BottomNav spaces={navSpaces} />
     </>
   );
 }

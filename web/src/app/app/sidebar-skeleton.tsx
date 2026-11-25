@@ -40,12 +40,38 @@ export function SidebarSkeleton() {
           </div>
         </aside>
       )}
-      <div className="fixed inset-x-0 top-0 z-40 h-12 border-b border-[var(--border-muted)] bg-white/95 md:hidden">
-        <div className="flex h-full items-center gap-2 px-3">
-          <div className="h-8 w-8 animate-pulse rounded-lg bg-zinc-200" />
-          <div className="h-4 flex-1 animate-pulse rounded bg-zinc-200" />
-        </div>
-      </div>
+      <BottomNavSkeleton />
     </>
+  );
+}
+
+/** 移动底部 5tab 占位：空间列表流式补上前先出壳子，避免底栏闪跳 */
+function BottomNavSkeleton() {
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--border-muted)] bg-white/95 md:hidden">
+      <div className="mx-auto grid h-16 w-full max-w-[1200px] grid-cols-5 px-2">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex flex-col items-center justify-center gap-1"
+          >
+            <div className="h-6 w-6 animate-pulse rounded-full bg-zinc-200" />
+            <div className="h-2 w-8 animate-pulse rounded bg-zinc-200" />
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+/** 移动顶栏骨架：与 TopBar 同高，避免 useSearchParams 水合期间的布局跳动 */
+export function TopBarSkeleton() {
+  return (
+    <header className="sticky top-0 z-30 border-b border-[var(--border-muted)] bg-white/90 md:hidden">
+      <div className="mx-auto flex h-12 w-full max-w-[1200px] items-center justify-between px-4 md:px-6">
+        <div className="h-4 w-24 animate-pulse rounded bg-zinc-200" />
+        <div className="h-6 w-6 animate-pulse rounded-full bg-zinc-200" />
+      </div>
+    </header>
   );
 }

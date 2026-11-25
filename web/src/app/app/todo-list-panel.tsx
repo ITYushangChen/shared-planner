@@ -33,6 +33,8 @@ type Props = {
   hiddenCount?: number;
   /** 点击"查看全部"时回调（切到 range=all） */
   onShowAll?: () => void;
+  /** 手机端紧凑模式：隐藏「负责人」列、收窄留白、缩字号（桌面端不传） */
+  mobile?: boolean;
 };
 
 function isOverdue(todo: TodoRow, now: number): boolean {
@@ -61,6 +63,7 @@ export function TodoListPanel({
   includeDone = false,
   hiddenCount = 0,
   onShowAll,
+  mobile = false,
 }: Props) {
   const supabase = createClient();
   const [selected, setSelected] = useState<TodoRow | null>(null);
@@ -111,6 +114,12 @@ export function TodoListPanel({
     if (error) alert(error.message);
   }
 
+  // 手机端紧凑：更小留白 + 缩字号 + 取消最小宽（避免横向滚动遮挡）；桌面端保持原样
+  const cellPad = mobile ? "px-1.5 py-1.5" : "px-2 py-2";
+  const tableBase = mobile
+    ? "w-full min-w-0 border-collapse text-left text-[11px]"
+    : "w-full min-w-[640px] border-collapse text-left text-xs";
+
   return (
     <div className="flex flex-col gap-3">
       {hideTitle || canCreate ? (
@@ -151,14 +160,28 @@ export function TodoListPanel({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[var(--border-muted)] bg-white">
-          <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+          <table className={tableBase}>
             <thead>
               <tr className="border-b border-[var(--border-muted)] bg-[var(--surface-muted)]/60 text-[var(--text-muted)]">
-                <th className="w-10 px-2 py-2 text-center font-medium">完成</th>
-                <th className="px-2 py-2 font-medium">标题</th>
-                <th className="w-16 px-2 py-2 font-medium">优先级</th>
-                <th className="w-44 px-2 py-2 font-medium">截止 / 时间</th>
-                <th className="w-28 px-2 py-2 font-medium">负责人</th>
+                <th
+                  className={`${mobile ? "w-8" : "w-10"} ${cellPad} text-center font-medium`}
+                >
+                  完成
+                </th>
+                <th className={`${cellPad} font-medium`}>标题</th>
+                <th
+                  className={`${mobile ? "w-14" : "w-16"} ${cellPad} whitespace-nowrap font-medium`}
+                >
+                  优先级
+                </th>
+                <th
+                  className={`${mobile ? "w-28" : "w-44"} ${cellPad} whitespace-nowrap font-medium`}
+                >
+                  截止 / 时间
+                </th>
+                {!mobile ? (
+                  <th className={`w-28 ${cellPad} font-medium`}>负责人</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -181,7 +204,7 @@ export function TodoListPanel({
                     ].join(" ")}
                   >
                     <td
-                      className="px-2 py-2 text-center"
+                      className={`${cellPad} text-center`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -202,7 +225,7 @@ export function TodoListPanel({
                         {done ? "✓" : null}
                       </button>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className={cellPad}>
                       <div className="flex min-w-0 items-center gap-1.5">
                         {conflicted ? (
                           <span className="shrink-0 rounded bg-red-100 px-1 text-[10px] font-medium text-red-600">
@@ -222,12 +245,12 @@ export function TodoListPanel({
                         </span>
                       </div>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className={`${cellPad} whitespace-nowrap`}>
                       <span className="font-medium" style={{ color: accent }}>
                         {PRIORITY_LABEL[t.priority] ?? "—"}
                       </span>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className={cellPad}>
                       {overdue ? (
                         <span className="mr-1 rounded bg-red-100 px-1 text-[10px] font-medium text-red-600">
                           逾期
@@ -235,6 +258,7 @@ export function TodoListPanel({
                       ) : null}
                       <span
                         className={[
+                          mobile ? "whitespace-nowrap" : "",
                           "tabular-nums",
                           overdue
                             ? "font-medium text-red-600"
@@ -245,16 +269,18 @@ export function TodoListPanel({
                         {formatTodoTimeLabel(t)}
                       </span>
                     </td>
-                    <td className="px-2 py-2 text-zinc-600">
-                      <span className="block truncate" title={assignee}>
-                        {assignee}
-                      </span>
-                      {extra > 0 ? (
-                        <span className="text-[10px] text-zinc-400">
-                          +{extra}
+                    {!mobile ? (
+                      <td className={`${cellPad} text-zinc-600`}>
+                        <span className="block truncate" title={assignee}>
+                          {assignee}
                         </span>
-                      ) : null}
-                    </td>
+                        {extra > 0 ? (
+                          <span className="text-[10px] text-zinc-400">
+                            +{extra}
+                          </span>
+                        ) : null}
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}

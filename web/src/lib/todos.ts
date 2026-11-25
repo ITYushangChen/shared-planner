@@ -115,18 +115,36 @@ export function rruleLabel(rrule: string | null | undefined): string | null {
   if (!rrule) return null;
   const freq = /FREQ=([A-Za-z]+)/i.exec(rrule)?.[1]?.toUpperCase();
   const interval = parseInt(/INTERVAL=([0-9]+)/i.exec(rrule)?.[1] || "1", 10) || 1;
+  let label: string;
   switch (freq) {
     case "DAILY":
-      return "每天";
+      label = interval > 1 ? `每${interval}天` : "每天";
+      break;
     case "WEEKLY":
-      return interval === 2 ? "每两周" : interval > 1 ? `每${interval}周` : "每周";
+      label = interval === 2 ? "每两周" : interval > 1 ? `每${interval}周` : "每周";
+      break;
     case "MONTHLY":
-      return "每月";
+      label = "每月";
+      break;
     case "YEARLY":
-      return "每年";
+      label = "每年";
+      break;
     default:
-      return "循环";
+      label = "循环";
   }
+  // 带截至日期：YYYYMMDDTHHMMSSZ → 还原为本地 YYYY-MM-DD（与 recurrence-field 口径一致）
+  const u = /UNTIL=(\d{8})T(\d{6})Z/i.exec(rrule);
+  if (u) {
+    const d = new Date(
+      Date.UTC(
+        +u[1].slice(0, 4), +u[1].slice(4, 6) - 1, +u[1].slice(6, 8),
+        +u[2].slice(0, 2), +u[2].slice(2, 4), +u[2].slice(4, 6),
+      ),
+    );
+    const pad = (n: number) => String(n).padStart(2, "0");
+    label += ` 至${d.getMonth() + 1}/${d.getDate()}`;
+  }
+  return label;
 }
 
 /** 跨自然日排期（用于卡片渐变区分） */
@@ -221,7 +239,16 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
   return todos
     .filter((t) => t.start_at)
     .map((t) => {
-      const color = resolveTodoColor(t.color, t.priority, uiPrefs);
+      const hasCustomColor =
+        !!t.color && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(t.color);
+      // 自定义色优先；否则按四象限（手动归属优先，回退自动计算）取浅底深字
+      const quadrant = hasCustomColor ? null : effectiveQuadrant(t);
+      const qc = quadrant ? QUADRANT_HEX[quadrant] : null;
+      const color = hasCustomColor
+        ? t.color!
+        : qc
+          ? qc.bg
+          : resolveTodoColor(t.color, t.priority, uiPrefs);
       const fill =
         taskOpacity >= 0.999 ? color : hexToRgba(color, taskOpacity);
       const spaceName = t.spaces?.name?.trim();
@@ -242,10 +269,12 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
         end: allDayRange ? allDayRange.end : t.end_at || undefined,
         allDay: t.is_all_day,
         backgroundColor: fill,
-        borderColor: urgent
-          ? hexToRgba("#e85d5d", Math.min(1, taskOpacity + 0.05))
-          : fill,
-        textColor: todoPriorityTextColor(t.priority),
+        borderColor: qc
+          ? qc.border
+          : urgent
+            ? hexToRgba("#e85d5d", Math.min(1, taskOpacity + 0.05))
+            : fill,
+        textColor: qc ? qc.fg : todoPriorityTextColor(t.priority),
         extendedProps: {
           spaceId: t.space_id,
           spaceName: spaceName ?? "空间",
@@ -255,7 +284,8 @@ export function todosToEvents(todos: TodoRow[], uiPrefs?: UiPrefs | null) {
           urgent,
           parentTodoId: t.parent_todo_id ?? null,
           color: t.color ?? null,
-          solidColor: color,
+          solidColor: qc ? qc.fg : color,
+          quadrantBg: qc ? qc.bg : null,
           todoTitle: t.title,
           assignees: (t.todo_assignees ?? [])
             .map(
@@ -514,6 +544,20 @@ export const QUADRANT_LABEL: Record<QuadrantKey, string> = {
   urgent_normal: "紧急 · 不重要",
   important: "重要 · 不紧急",
   normal: "不重要 · 不紧急",
+};
+
+/**
+ * 四象限事件块配色（hex 对齐 globals.css 的 --qd-* 变量，浅底 + 同色深字）。
+ * 仅用于日历事件块：bg 作主体浅底、fg 作深色文字、border 作描边。
+ */
+export const QUADRANT_HEX: Record<
+  QuadrantKey,
+  { bg: string; fg: string; border: string }
+> = {
+  urgent_important: { bg: "#fbeaea", fg: "#c0392b", border: "#f3c9c9" },
+  important: { bg: "#e6f1fb", fg: "#185fa5", border: "#c8dcef" },
+  urgent_normal: { bg: "#fdf1e3", fg: "#d97a1f", border: "#f5d9b3" },
+  normal: { bg: "#f0f2f4", fg: "#6b7280", border: "#dfe3e8" },
 };
 
 /** 2×2 展示顺序：左上紧急重要、右上紧急不重要、左下重要不紧急、右下不重要不紧急 */

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
@@ -68,6 +69,27 @@ import { useUiPrefsOptional } from "./ui-prefs-provider";
 
 const FC_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 
+/**
+ * 手机端专属：3 日横滑视图（桌面完全不注册、不感知）。
+ * FullCalendar 自定义 view 的 duration=3 天，prev/next 一次正好翻 3 天，
+ * 与手机「整屏翻页」手势天然对齐。
+ */
+const FC_VIEWS = {
+  threeDay: {
+    type: "timeGrid",
+    duration: { days: 3 },
+  },
+};
+
+type MobileRange = "day" | "threeDay" | "week" | "month";
+
+function mobileRangeToFcView(range: MobileRange) {
+  if (range === "day") return "timeGridDay";
+  if (range === "threeDay") return "threeDay";
+  if (range === "month") return "dayGridMonth";
+  return "timeGridWeek";
+}
+
 function todosSignature(list: TodoRow[]) {
   return list
     .map(
@@ -131,6 +153,14 @@ function rangeToFcView(range: "day" | "week" | "month") {
   return "timeGridWeek";
 }
 
+// 手机端日/3日/周/月切换（照搬 view-switcher 的分段样式，不含「全部」）
+const MOBILE_RANGES = [
+  ["day", "日", "日视图"],
+  ["threeDay", "3日", "三日视图"],
+  ["week", "周", "周视图"],
+  ["month", "月", "月视图"],
+] as const;
+
 export function TodosCalendar({
   todos: todosProp,
   spaces = [],
@@ -175,7 +205,37 @@ export function TodosCalendar({
     y: number;
     todo: TodoRow;
   } | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  // 首帧就按视口判定，避免 dynamic(ssr:false) 挂载后先闪一下桌面周视图
+  const [isMobile, setIsMobile] = useState(
+    () =>
+      mobileDateChrome &&
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px)").matches,
+  );
+  /** 手机端日程清单（点日期标题弹出） */
+  const [dayList, setDayList] = useState<{ date: string; label: string } | null>(
+    null,
+  );
+  /** 手机端专属视图：独立 URL 参数 mrange，不污染父级 range（桌面过滤逻辑） */
+  const rawMRange = searchParams.get("mrange");
+  const [mobileRange, setMobileRange] = useState<MobileRange>(
+    rawMRange === "day" ||
+      rawMRange === "threeDay" ||
+      rawMRange === "week" ||
+      rawMRange === "month"
+      ? rawMRange
+      : "threeDay",
+  );
+  useEffect(() => {
+    if (
+      rawMRange === "day" ||
+      rawMRange === "threeDay" ||
+      rawMRange === "week" ||
+      rawMRange === "month"
+    ) {
+      setMobileRange(rawMRange);
+    }
+  }, [rawMRange]);
   /**
    * 视图外改动提示：轮询/他人刷新重拉到的是「当前空间全部已排期任务」，
    * 但 FullCalendar 只渲染当前视图时间窗口内的事件。当某个任务落在当前
@@ -265,13 +325,15 @@ export function TodosCalendar({
 
   useEffect(() => {
     // FullCalendar.changeView 内部会 flushSync，须离开当前 React 渲染周期
-    const next = rangeToFcView(viewRange);
+    const next = isMobile
+      ? mobileRangeToFcView(mobileRange)
+      : rangeToFcView(viewRange);
     const t = window.setTimeout(() => {
       const api = calendarRef.current?.getApi();
       if (api && api.view.type !== next) api.changeView(next);
     }, 0);
     return () => window.clearTimeout(t);
-  }, [viewRange]);
+  }, [viewRange, isMobile, mobileRange]);
 
   useEffect(() => {
     if (focusFromUrl) setPendingFocus(focusFromUrl);
@@ -943,8 +1005,15 @@ export function TodosCalendar({
       (arg.event.extendedProps.todoTitle as string | undefined)?.trim() ||
       arg.event.title;
     // 卡片里只显示标题：时间由事件在时间轴上的位置/时长表达，指派人不在日历里看
+    // 手机端内边距略放大，让窄列里的标题有呼吸、色块更高更好点
     return (
-      <div className="fc-event-stack px-0.5 py-0.5 leading-snug">
+      <div
+        className={
+          isMobile
+            ? "fc-event-stack px-1 py-1 leading-snug"
+            : "fc-event-stack px-0.5 py-0.5 leading-snug"
+        }
+      >
         <CalendarEventTitle
           title={todoTitle}
           className={[
@@ -955,6 +1024,71 @@ export function TodosCalendar({
       </div>
     );
   }
+
+  // 手机端日/3日/周/月：
+  // - mrange：手机视图档位（含 3日），只手机认，桌面完全不感知
+  // - range ：父级数据拉取/过滤范围（OverviewRange 无 threeDay，映射到 week，周覆盖 3 天）
+  //   不写 range 会导致「切到月视图但父级只按周拉数据」→ 月视图缺任务
+  function patchMobileRange(next: MobileRange) {
+    setMobileRange(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("mrange", next);
+    params.set("range", next === "threeDay" ? "week" : next);
+    startTransition(() => {
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    });
+  }
+
+  /** 手机：整屏滑动翻页。3 日视图 duration=3，prev/next 一次正好翻 3 天。 */
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  function onTouchStart(e: React.TouchEvent) {
+    if (!isMobile || e.touches.length !== 1) return;
+    touchStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    };
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!isMobile || !start || e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    // 横向有效、纵向偏移不能过大（避免把时间轴纵向滚动误判成翻页）
+    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.7) return;
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    if (dx < 0) api.next();
+    else api.prev();
+  }
+
+  /** 手机：点日期标题 → 底部弹出当天任务清单 */
+  function onDayHeaderClick(info: { date: Date; text: string }) {
+    setDayList({
+      date: toDateInput(info.date),
+      label: info.text,
+    });
+  }
+
+  /** 当天清单的任务：按本地日期匹配 start，全天/跨天按区间覆盖 */
+  const dayListTodos = useMemo(() => {
+    if (!dayList) return [];
+    return todos
+      .filter((t) => {
+        if (!t.start_at) return false;
+        const s = new Date(t.start_at);
+        if (Number.isNaN(s.getTime())) return false;
+        // 多日任务的中间日期也算覆盖
+        const end = t.end_at ? new Date(t.end_at) : s;
+        const d = new Date(`${dayList.date}T00:00:00`);
+        return s <= d && d <= (Number.isNaN(end.getTime()) ? s : end);
+      })
+      .sort((a, b) => {
+        const sa = a.start_at ? new Date(a.start_at).getTime() : 0;
+        const sb = b.start_at ? new Date(b.start_at).getTime() : 0;
+        return sa - sb;
+      });
+  }, [dayList, todos]);
 
   return (
     <div
@@ -995,13 +1129,9 @@ export function TodosCalendar({
         </div>
       )}
 
-      {mobileDateChrome && conflictIds.size > 0 ? (
-        <p className="mb-2 text-xs font-medium text-red-600 md:hidden">
-          {conflictIds.size} 项冲突
-        </p>
-      ) : null}
+      {/* 手机：错误仍单行提示；冲突缩成分段控件右侧的小角标，不再单独占一行 */}
       {mobileDateChrome && error ? (
-        <p className="mb-2 text-xs text-red-600 md:hidden">{error}</p>
+        <p className="mb-1 text-[11px] text-red-600 md:hidden">{error}</p>
       ) : null}
 
       {hideTitle ? null : (
@@ -1025,8 +1155,66 @@ export function TodosCalendar({
         </button>
       ) : null}
 
+      {isMobile ? (
+        <div className="mb-1.5 flex items-center justify-between gap-2 px-1 md:hidden">
+          <div
+            className="inline-flex shrink-0 overflow-hidden rounded-lg border border-[var(--border-muted)] bg-white"
+            role="group"
+            aria-label="时间范围"
+          >
+            {MOBILE_RANGES.map(([key, label, title]) => {
+              const active = mobileRange === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  title={title}
+                  aria-label={title}
+                  aria-pressed={active}
+                  onClick={() => patchMobileRange(key)}
+                  className={[
+                    "px-2.5 py-1 text-xs transition-colors duration-200",
+                    active
+                      ? "bg-[var(--brand)] font-medium text-white"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)]",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {conflictIds.size > 0 ? (
+            <button
+              type="button"
+              title="查看冲突任务"
+              onClick={() => {
+                const first = todos.find((t) => conflictIds.has(t.id));
+                if (first) setSelected(first);
+              }}
+              className="shrink-0 rounded-full bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600"
+            >
+              ● {conflictIds.size} 冲突
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <div
         className="fc-theme sharetodo-calendar text-sm"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onClick={(e) => {
+          if (!isMobile) return;
+          const cell = (e.target as HTMLElement).closest<HTMLElement>(
+            ".fc-col-header-cell[data-date]",
+          );
+          if (!cell) return;
+          const ymd = cell.dataset.date;
+          if (!ymd) return;
+          const d = new Date(`${ymd}T12:00:00`);
+          onDayHeaderClick({ date: d, text: cell.textContent?.trim() || ymd });
+        }}
         onContextMenu={(e) => {
           const target = (e.target as HTMLElement).closest(".fc-event");
           if (!target) return;
@@ -1052,7 +1240,8 @@ export function TodosCalendar({
         <FullCalendar
           ref={calendarRef}
           plugins={FC_PLUGINS}
-          initialView={rangeToFcView(viewRange)}
+          views={FC_VIEWS}
+          initialView={isMobile ? mobileRangeToFcView(mobileRange) : rangeToFcView(viewRange)}
           headerToolbar={
             isMobile
               ? {
@@ -1110,7 +1299,7 @@ export function TodosCalendar({
                 arg.event.backgroundColor ||
                 (arg.event.extendedProps.color as string | undefined) ||
                 "#5cb88a";
-              const alpha = Math.min(0.72, taskOpacity);
+              const alpha = Math.min(0.9, taskOpacity);
               arg.el.classList.add("fc-event-glass");
               arg.el.style.setProperty(
                 "background-color",
@@ -1128,6 +1317,7 @@ export function TodosCalendar({
               taskOpacity < 0.999
             ) {
               const raw =
+                (arg.event.extendedProps.quadrantBg as string | undefined) ||
                 (arg.event.extendedProps.solidColor as string | undefined) ||
                 arg.event.backgroundColor ||
                 "#5cb88a";
@@ -1172,6 +1362,11 @@ export function TodosCalendar({
             week: "周",
             day: "日",
           }}
+          slotLabelFormat={
+            isMobile
+              ? { hour: "2-digit", omitZeroMinute: true, hour12: false }
+              : undefined
+          }
           slotMinTime={slotRange.min}
           slotMaxTime={slotRange.max}
           allDayText="全天"
@@ -1179,6 +1374,31 @@ export function TodosCalendar({
           dayMaxEvents={false}
         />
       </div>
+
+      {isMobile &&
+      !dayList &&
+      !createPrefill &&
+      !selected &&
+      typeof document !== "undefined"
+        ? createPortal(
+            <button
+              type="button"
+              aria-label="新建任务"
+              onClick={() => {
+                const now = new Date();
+                openCreateAt(
+                  now,
+                  new Date(now.getTime() + 60 * 60 * 1000),
+                  false,
+                );
+              }}
+              className="fixed bottom-20 right-4 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand)] text-3xl font-light leading-none text-white shadow-lg active:scale-95"
+            >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
 
       {menu ? (
         <div
@@ -1210,6 +1430,81 @@ export function TodosCalendar({
             取消
           </button>
         </div>
+      ) : null}
+
+      {isMobile && dayList ? (
+        <Modal
+          open
+          onClose={() => setDayList(null)}
+          title={`${dayList.date} 当天任务`}
+          variant="bottom"
+        >
+          <div className="flex max-h-[70vh] flex-col">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-zinc-900">
+                {dayList.label}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setDayList(null)}
+                className="text-sm text-zinc-500 hover:text-zinc-800"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {dayListTodos.length === 0 ? (
+                <p className="py-6 text-center text-sm text-zinc-400">
+                  这天暂无已排期任务
+                </p>
+              ) : (
+                <ul className="divide-y divide-zinc-100">
+                  {dayListTodos.map((t) => {
+                    const start = t.start_at ? new Date(t.start_at) : null;
+                    const time = start
+                      ? `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
+                      : "";
+                    return (
+                      <li key={t.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDayList(null);
+                            setSelected(t);
+                          }}
+                          className="flex w-full items-center gap-3 py-2.5 text-left"
+                        >
+                          <span className="w-10 shrink-0 font-mono text-xs text-zinc-400">
+                            {t.is_all_day ? "全天" : time}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm text-zinc-800">
+                            {t.title}
+                          </span>
+                          {conflictIds.has(t.id) ? (
+                            <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] text-red-600">
+                              冲突
+                            </span>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDayList(null);
+                const start = new Date(`${dayList.date}T09:00:00`);
+                openCreateAt(start, new Date(start.getTime() + 60 * 60 * 1000), false);
+              }}
+              className="mt-3 w-full rounded-lg bg-[var(--brand)] py-2 text-sm font-medium text-white"
+            >
+              + 在这天新建任务
+            </button>
+          </div>
+        </Modal>
       ) : null}
 
       {selected ? (
@@ -1426,7 +1721,7 @@ export function TodosCalendar({
                 env(safe-area-inset-bottom, 0px)
             ) !important;
             --fc-border-color: rgba(113, 113, 122, 0.22);
-            --fc-today-bg-color: rgba(24, 95, 165, 0.1);
+            --fc-today-bg-color: rgba(24, 95, 165, 0.16);
             --fc-page-bg-color: transparent;
             --fc-neutral-bg-color: rgba(255, 255, 255, 0.2);
           }
@@ -1439,6 +1734,16 @@ export function TodosCalendar({
             /* 接近课表单节高度 */
             height: 2.85rem !important;
             min-height: 2.85rem !important;
+          }
+          /* 时间轴收窄：周视图 7 列太挤，砍掉分钟、缩字号，把宽度让给 7 个日期列 */
+          .sharetodo-cal-mobile .fc-timegrid-slot-label-cushion {
+            padding: 0 3px !important;
+            font-size: 0.625rem !important;
+            line-height: 1 !important;
+            color: #8a9099;
+          }
+          .sharetodo-cal-mobile .fc-timegrid-axis-frame {
+            width: auto !important;
           }
           .sharetodo-cal-mobile .fc-timegrid-event,
           .sharetodo-cal-mobile .fc-event-glass {
@@ -1522,6 +1827,31 @@ export function TodosCalendar({
             min-height: 5rem !important;
             height: 5rem !important;
             max-height: 5rem !important;
+          }
+          /* 3 日横滑：列数少、每列更宽；日期标题加大并提示可点开当天清单 */
+          .sharetodo-cal-mobile .fc-threeDay-view .fc-col-header-cell-cushion {
+            font-size: 0.9rem !important;
+            font-weight: 600 !important;
+            padding: 0.45rem 0 !important;
+          }
+          .sharetodo-cal-mobile .fc-threeDay-view .fc-col-header-cell {
+            cursor: pointer;
+          }
+          .sharetodo-cal-mobile .fc-threeDay-view .fc-timegrid-slot {
+            height: 3.1rem !important;
+            min-height: 3.1rem !important;
+          }
+          /* 满屏沉浸：顶栏元素压缩后把日历主体高度补满 */
+          .sharetodo-cal-mobile .sharetodo-calendar,
+          .sharetodo-cal-mobile .fc {
+            height: calc(
+              100dvh - 8.25rem - env(safe-area-inset-top, 0px) -
+                env(safe-area-inset-bottom, 0px)
+            ) !important;
+          }
+          /* 日期标题统一加大点按区域（日/3日/周视图） */
+          .sharetodo-cal-mobile .fc-col-header-cell-cushion {
+            padding: 0.35rem 0 !important;
           }
         }
       `}</style>

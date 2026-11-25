@@ -25,6 +25,21 @@
   --pri-medium: #b7bbbd;
   --pri-low: #5cb88a;
 
+  /* 四象限配色（红/蓝/橙/灰）——浅底 + 同色深字，与优先级 pri-* 解耦。
+     红=重要且紧急、蓝=重要不紧急、橙=紧急不重要、灰=不重要不紧急。 */
+  --qd-red-bg: #fbeaea;
+  --qd-red-fg: #c0392b;
+  --qd-red-border: #f3c9c9;
+  --qd-blue-bg: #e6f1fb;
+  --qd-blue-fg: #185fa5;
+  --qd-blue-border: #c8dcef;
+  --qd-orange-bg: #fdf1e3;
+  --qd-orange-fg: #d97a1f;
+  --qd-orange-border: #f5d9b3;
+  --qd-gray-bg: #f0f2f4;
+  --qd-gray-fg: #6b7280;
+  --qd-gray-border: #dfe3e8;
+
   --status-todo: #e85d5d;
   --status-progress: #4a9eda;
   --status-done: #3db87a;

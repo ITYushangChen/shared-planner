@@ -10,7 +10,7 @@ import Link from "next/link";
 export function BackToAppButton({ label = "返回" }: { label?: string }) {
   return (
     <Link
-      href="/app?view=calendar&range=week"
+      href="/app"
       className="inline-flex rounded-xl border border-[#2f5f8f]/55 bg-white px-4 py-2 text-sm font-medium text-[#2f5f8f] transition-colors duration-200 hover:bg-[#e8f0f7]"
     >
       {label}
